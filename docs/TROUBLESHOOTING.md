@@ -1,0 +1,53 @@
+# 故障排除
+
+## 1. GPU 探针失败 / libcuda.so 找不到
+
+**现象**：`The third-party dynamic library (libcuda.so) is not configured correctly`
+
+**原因**：WSL 的 libcuda 在 `/usr/lib/wsl/lib/`，不在默认搜索路径。
+
+**解决**：确认 `scripts/run_in_wsl.sh` 里有 `export LD_LIBRARY_PATH=/usr/lib/wsl/lib:$LD_LIBRARY_PATH`。
+手动验证：
+```bash
+wsl -d Ubuntu -e bash -c "export LD_LIBRARY_PATH=/usr/lib/wsl/lib:\$LD_LIBRARY_PATH; python -c 'import paddle; print(paddle.device.cuda.get_device_capability(0))'"
+```
+应输出 `(12, 0)`。
+
+## 2. 模型下载失败 / No available model hosting platforms
+
+**原因**：默认走 HuggingFace，国内不可达，连带把所有源判失败。
+
+**解决**：设置环境变量（已在 run_in_wsl.sh 配好）：
+```bash
+export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true
+export PADDLE_PDX_MODEL_SOURCE=modelscope
+```
+
+## 3. VL 报 DependencyError: requires additional dependencies
+
+**解决**：装 VL 依赖（已含在 install_wsl.sh）：
+```bash
+pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
+    premailer regex safetensors scikit-learn scipy sentencepiece tiktoken tokenizers
+```
+验证：`python -c "from paddlex.utils.deps import is_extra_available; print(is_extra_available('ocr'))"`
+应输出 `True`。
+
+## 4. 显存不足
+
+5080 16GB 跑 VL 公式类长文档时显存可能紧张（峰值约 15.8GB）。
+5090D 32GB 无此问题。临时缓解：减小图片分辨率或分页处理。
+
+## 5. Windows 原生 Paddle GPU 在 Blackwell 上不可用
+
+这是已知限制：Paddle 官方 Windows GPU wheel 仅 cu118/cu126，不含 sm_120 cubin。
+**必须用 WSL2 + Linux cu129 wheel**。本项目已采用此方案。
+
+## 6. PaddleOCR 报 oneDNN / PIR 错误
+
+设置 `export PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0`（已在 run_in_wsl.sh 配好）。
+
+## 7. pip 装包超时
+
+清华/阿里云镜像偶有波动。install_wsl.sh 用阿里云 + `--retries 5 --timeout 90`。
+可手动换源重试。
