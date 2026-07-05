@@ -37,7 +37,7 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 |---|---|
 | `gpu_probe.py` | 启动时强制验证 GPU 可用（sm_120+、算子执行），失败即退出，不回退 CPU |
 | `router.py` | 按扩展名分流：图片→ocr，PDF→vl；`--engine` 可覆盖 |
-| `service.py` | 常驻 OCR 运行时，缓存 PP-OCRv6/VL 引擎并串行化推理调用 |
+| `service.py` | 常驻 OCR 运行时，缓存 PP-OCRv6；VL/PDF 使用隔离子进程并串行化推理调用 |
 | `server.py` | FastAPI 本地 API，提供 `/health`、`/ocr/path`、`/ocr/file` |
 | `engines/ppocrv6.py` | PP-OCRv6_medium（det+rec），方向检测/矫正/文本行旋转全开 |
 | `engines/vl.py` | PaddleOCR-VL-1.6，native 后端本地推理 |
@@ -59,9 +59,12 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 
 ## 本地 API
 
-`start_server.ps1` 在 WSL 中运行 `python -m localocr.server`，默认只监听
-`127.0.0.1:8765`。服务启动时执行 GPU 探针；第一次请求某类引擎时加载模型，
-之后同一进程内复用模型实例，避免频繁 CLI 冷启动。
+`start_server.ps1` 通过 Windows `Start-Process` 启动隐藏的 `wsl.exe` 会话，并在
+其中以前台进程运行 `python -m localocr.server`，默认只监听 `127.0.0.1:8765`。
+服务启动时执行 GPU 探针；PP-OCR 图片请求在 API 进程内加载并复用模型实例。
+PaddleOCR-VL/PDF/复杂版面请求通过隔离子进程执行，避免 VL 超大模型与 Uvicorn
+生命周期、信号处理或显存释放互相影响。Windows 侧启动进程 PID 记录在
+`_server/wsl-server.pid`，`stop_server.ps1` 停止 WSL 内服务后会清理该文件。
 
 | 端点 | 作用 |
 |---|---|

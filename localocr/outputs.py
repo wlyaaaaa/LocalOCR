@@ -8,7 +8,7 @@ from typing import Any
 def write_outputs(result: dict[str, Any], file_path: Path, out_dir: Path) -> dict[str, Path]:
     """把单个文件的结果写成 .txt / .md / .json 三份，返回各路径。"""
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = _safe_stem(file_path)
+    stem = safe_output_stem(file_path)
     txt_path = out_dir / f"{stem}.txt"
     md_path = out_dir / f"{stem}.md"
     json_path = out_dir / f"{stem}.json"
@@ -18,7 +18,7 @@ def write_outputs(result: dict[str, Any], file_path: Path, out_dir: Path) -> dic
     return {"txt": txt_path, "md": md_path, "json": json_path}
 
 
-def _safe_stem(path: Path) -> str:
+def safe_output_stem(path: Path) -> str:
     import re
     return re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", path.stem)[:120]
 

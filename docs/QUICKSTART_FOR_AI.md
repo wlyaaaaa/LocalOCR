@@ -61,6 +61,9 @@ VL、PDF、公式或首次冷启动可能较慢，调用时保留默认 `-Timeou
 E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 ```
 
+注意：API 进程只常驻缓存 PP-OCR；VL/PDF 由隔离子进程执行。`/health` 里没有 `vl`
+不代表 VL 不可用，以一次 `-Engine vl` 实际调用结果为准。
+
 停止服务：
 
 ```powershell
@@ -88,7 +91,11 @@ API 请求体：
 
 ## 输出
 
-每个输入文件 → `outputs/文件名.txt` + `.md` + `.json`
+拖拽和一次性 CLI：每个输入文件 → `outputs/文件名.txt` + `.md` + `.json`
+
+常驻 API / `ocr_once.ps1`：返回 JSON 的 `results[].output_files` 记录输出路径，
+默认写到 `outputs/api/文件名.txt` + `.md` + `.json`
+
 - TXT：纯文本按页
 - MD：带标题层级，表格/公式保留结构
 - JSON：含坐标(bbox/polygon)、置信度(score)、阅读顺序(order)、块类型(type)

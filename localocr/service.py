@@ -1,14 +1,80 @@
 from __future__ import annotations
 
 import threading
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from .engines import get_engine
 from .gpu_probe import format_probe, probe_gpu
-from .outputs import write_outputs
+from .outputs import safe_output_stem, write_outputs
 from .pdf_utils import render_pdf_to_files
 from .router import collect_files, is_pdf, route_engine
+
+
+def run_isolated_command(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    timeout_sec: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command in an isolated process group and clean it up on timeout."""
+    popen_kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    elif os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        stdout, stderr = _terminate_isolated_process(proc, cmd, timeout_sec)
+        raise subprocess.TimeoutExpired(cmd, timeout_sec, output=stdout, stderr=stderr)
+
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+def _terminate_isolated_process(
+    proc: subprocess.Popen[str],
+    cmd: list[str],
+    timeout_sec: int,
+) -> tuple[str, str]:
+    if proc.poll() is not None:
+        stdout, stderr = proc.communicate()
+        return stdout, stderr
+
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    else:
+        proc.terminate()
+
+    try:
+        return proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            proc.kill()
+        return proc.communicate()
 
 
 class OCRService:
@@ -20,10 +86,13 @@ class OCRService:
         device: str = "gpu:0",
         tmp_dir: str | Path = "_pdf_pages/api",
         probe_on_start: bool = True,
+        isolated_timeout_sec: int = 3600,
     ) -> None:
         self.device = device
+        self.project_root = Path(__file__).resolve().parent.parent
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.isolated_timeout_sec = isolated_timeout_sec
         self._engine_cache: dict[str, Any] = {}
         self._lock = threading.RLock()
         self.gpu_info = probe_gpu() if probe_on_start else None
@@ -42,6 +111,48 @@ class OCRService:
         if key not in self._engine_cache:
             self._engine_cache[key] = get_engine(key, device=self.device)
         return self._engine_cache[key]
+
+    def _project_path(self, path: Path) -> Path:
+        return path if path.is_absolute() else self.project_root / path
+
+    def _process_vl_isolated(self, path: Path, output_dir: Path) -> dict[str, Any]:
+        """Run PaddleOCR-VL in a child process to keep the API worker stable."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = self.tmp_dir / "vl_subprocess"
+        cmd = [
+            sys.executable,
+            "-m",
+            "localocr.cli",
+            str(path),
+            "--engine",
+            "vl",
+            "--out-dir",
+            str(output_dir),
+            "--tmp-dir",
+            str(tmp_dir),
+        ]
+        completed = run_isolated_command(
+            cmd,
+            cwd=self.project_root,
+            timeout_sec=self.isolated_timeout_sec,
+        )
+        if completed.returncode != 0:
+            stdout_tail = completed.stdout[-2000:]
+            stderr_tail = completed.stderr[-2000:]
+            raise RuntimeError(
+                "VL isolated subprocess failed "
+                f"(exit={completed.returncode}). stdout_tail={stdout_tail!r} stderr_tail={stderr_tail!r}"
+            )
+
+        json_path = self._project_path(output_dir) / f"{safe_output_stem(path)}.json"
+        if not json_path.exists():
+            raise RuntimeError(
+                f"VL isolated subprocess finished but did not create JSON output: {json_path}"
+            )
+        result = json.loads(json_path.read_text(encoding="utf-8"))
+        result["source_file"] = str(path)
+        result["engine_key"] = "vl"
+        return result
 
     def _ocr_pdf_with_engine(self, pdf_path: Path, engine_key: str, engine) -> dict[str, Any]:
         images = render_pdf_to_files(pdf_path, out_dir=self.tmp_dir)
@@ -93,10 +204,27 @@ class OCRService:
         results: list[dict[str, Any]] = []
         with self._lock:
             for file_path in files:
-                result = self.process_file(file_path, engine_choice)
-                if write_files:
+                engine_key = route_engine(file_path, engine_choice)
+                if engine_key == "vl":
+                    if write_files:
+                        result = self._process_vl_isolated(file_path, output_dir)
+                    else:
+                        runtime_dir = self.project_root / "_server"
+                        runtime_dir.mkdir(parents=True, exist_ok=True)
+                        with tempfile.TemporaryDirectory(prefix="localocr-vl-", dir=runtime_dir) as tmp:
+                            result = self._process_vl_isolated(file_path, Path(tmp))
+                else:
+                    result = self.process_file(file_path, engine_choice)
+                if write_files and "output_files" not in result:
                     paths = write_outputs(result, file_path, output_dir)
                     result["output_files"] = {k: str(v) for k, v in paths.items()}
+                elif write_files and "output_files" in result:
+                    stem = safe_output_stem(file_path)
+                    result["output_files"] = {
+                        "txt": str(output_dir / f"{stem}.txt"),
+                        "md": str(output_dir / f"{stem}.md"),
+                        "json": str(output_dir / f"{stem}.json"),
+                    }
                 results.append(result)
         return {
             "ok": True,

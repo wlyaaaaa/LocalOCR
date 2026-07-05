@@ -12,7 +12,7 @@
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
-- **常驻本地 API**：`start_server.ps1` 启动后模型常驻内存，后续 OCR 复用已加载模型，适合 Codex/脚本频繁调用。
+- **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
 
 ## 环境
 
@@ -85,6 +85,9 @@ HTTP 入口：
 - `POST http://127.0.0.1:8765/ocr/path`
 - `POST http://127.0.0.1:8765/ocr/file`
 
+说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=vl`
+会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
+
 `/ocr/path` 请求示例：
 
 ```json
@@ -95,6 +98,9 @@ HTTP 入口：
   "write_outputs": true
 }
 ```
+
+`ocr_once.ps1` 返回 API JSON；每个输入文件的输出路径位于
+`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
 
 ## 目录
 

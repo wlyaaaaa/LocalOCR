@@ -94,3 +94,6 @@ E:\LocalOCR\ocr_once.ps1 "E:\path\scan.pdf" -Engine vl -TimeoutSec 3600
 Invoke-RestMethod http://127.0.0.1:8765/health
 Get-Content E:\LocalOCR\_server\localocr-api.log -Tail 80
 ```
+
+`/health` 的 `loaded_engines` 不一定出现 `vl`：VL/PDF 由隔离子进程执行，不常驻在
+API 进程中。判断 VL 是否可用应以一次 `-Engine vl` 调用是否成功为准。
