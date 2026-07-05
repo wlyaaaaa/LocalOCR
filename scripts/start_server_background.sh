@@ -5,15 +5,16 @@ set -euo pipefail
 HOST="${1:-127.0.0.1}"
 PORT="${2:-8765}"
 PROJ=/mnt/e/LocalOCR
-SERVER_DIR="$PROJ/.server"
-LOG="$SERVER_DIR/server.log"
+SERVER_DIR="$PROJ/_server"
+LOG="$SERVER_DIR/localocr-api.log"
 PID_FILE="$SERVER_DIR/server.pid"
 
 mkdir -p "$SERVER_DIR"
 cd "$PROJ"
 
-nohup scripts/run_in_wsl.sh -m localocr.server --host "$HOST" --port "$PORT" \
+setsid nohup scripts/run_in_wsl.sh -m localocr.server --host "$HOST" --port "$PORT" \
     > "$LOG" 2>&1 < /dev/null &
 
 echo "$!" > "$PID_FILE"
+disown "$(cat "$PID_FILE")" 2>/dev/null || true
 echo "LocalOCR API starting with pid $(cat "$PID_FILE"), log: $LOG"

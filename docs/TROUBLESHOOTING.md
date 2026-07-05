@@ -74,3 +74,23 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m localo
 ```powershell
 E:\LocalOCR\stop_server.ps1
 ```
+
+## 9. `ocr_once.ps1` 长任务请求超时
+
+**现象**：VL、扫描 PDF 或公式图片首次识别时报
+`The request was aborted: The operation has timed out.`
+
+**原因**：VL 冷启动会加载模型权重，复杂版面推理也可能较久；客户端等待时间必须大于模型加载和推理时间。
+
+**解决**：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\path\scan.pdf" -Engine vl -TimeoutSec 3600
+```
+
+当前脚本默认 `TimeoutSec=3600`。如果仍超时，先看服务是否还活着：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/health
+Get-Content E:\LocalOCR\_server\localocr-api.log -Tail 80
+```

@@ -9,7 +9,8 @@ param(
     [switch]$Recursive,
     [string]$OutDir,
     [int]$Port = 8765,
-    [string]$HostAddress = "127.0.0.1"
+    [string]$HostAddress = "127.0.0.1",
+    [int]$TimeoutSec = 3600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,10 +42,31 @@ if ($OutDir) {
 }
 
 $json = $body | ConvertTo-Json -Depth 8
-$client = New-Object System.Net.WebClient
-$client.Encoding = [System.Text.Encoding]::UTF8
-$client.Headers.Add("Content-Type", "application/json; charset=utf-8")
-$raw = $client.UploadString("$base/ocr/path", "POST", $json)
+$request = [System.Net.HttpWebRequest]::Create("$base/ocr/path")
+$request.Method = "POST"
+$request.ContentType = "application/json; charset=utf-8"
+$request.Timeout = $TimeoutSec * 1000
+$request.ReadWriteTimeout = $TimeoutSec * 1000
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+$request.ContentLength = $bytes.Length
+$stream = $request.GetRequestStream()
+try {
+    $stream.Write($bytes, 0, $bytes.Length)
+} finally {
+    $stream.Close()
+}
+
+$response = $request.GetResponse()
+try {
+    $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+    try {
+        $raw = $reader.ReadToEnd()
+    } finally {
+        $reader.Close()
+    }
+} finally {
+    $response.Close()
+}
 $result = $raw | ConvertFrom-Json
 
 $result | ConvertTo-Json -Depth 100

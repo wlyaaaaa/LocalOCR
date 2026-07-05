@@ -10,6 +10,7 @@ outputs/
 _pdf_pages/
 _case_work/
 .server/
+_server/
 
 # 模型缓存（体积大，不入库；用户用 scripts/download_models.py 自行下载）
 models/

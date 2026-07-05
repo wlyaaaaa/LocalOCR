@@ -72,6 +72,9 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # 通过 API 调一次 OCR；如果服务未启动，会自动拉起
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
 
+# VL / PDF / 公式等长任务可显式放宽客户端等待时间
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
+
 # 停止服务
 .\stop_server.ps1
 ```

@@ -6,9 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ServerDir = Join-Path $ScriptDir ".server"
+$ServerDir = Join-Path $ScriptDir "_server"
 New-Item -ItemType Directory -Force -Path $ServerDir | Out-Null
-$LogPath = Join-Path $ServerDir "server.log"
+$LogPath = Join-Path $ServerDir "localocr-api.log"
 
 try {
     $existing = Invoke-RestMethod -Uri "http://${HostAddress}:$Port/health" -Method Get -TimeoutSec 15

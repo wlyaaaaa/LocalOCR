@@ -11,7 +11,7 @@
 - 运行环境：WSL2 Ubuntu 24.04，venv 在 `/root/localocr-venv`
 - PaddlePaddle GPU 3.3.1 (cu129) + PaddleOCR 3.7.0 已装
 - 模型已下载到 `/root/.paddlex/official_models/`（PP-OCRv6_medium + PaddleOCR-VL-1.6），可离线
-- GPU：RTX 5080（明天换 5090D），Blackwell sm_120，已验证可用
+- GPU：RTX 5090D，Blackwell sm_120，已验证可用
 
 ## 命令行
 
@@ -53,6 +53,12 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 
 ```powershell
 E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+```
+
+VL、PDF、公式或首次冷启动可能较慢，调用时保留默认 `-TimeoutSec 3600`，或显式传入：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 ```
 
 停止服务：
