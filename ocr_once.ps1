@@ -11,6 +11,7 @@ param(
     [int]$Port = 8765,
     [string]$HostAddress = "127.0.0.1",
     [int]$TimeoutSec = 3600,
+    [int]$StartupTimeoutSec = 600,
     [switch]$StopAfter
 )
 
@@ -30,7 +31,7 @@ function Test-LocalOcrApi {
 
 try {
     if (-not (Test-LocalOcrApi)) {
-        & (Join-Path $ScriptDir "start_server.ps1") -Port $Port -HostAddress $HostAddress
+        & (Join-Path $ScriptDir "start_server.ps1") -Port $Port -HostAddress $HostAddress -StartupTimeoutSec $StartupTimeoutSec
     }
 
     $body = @{

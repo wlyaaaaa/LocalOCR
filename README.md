@@ -75,6 +75,9 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # VL / PDF / 公式等长任务可显式放宽客户端等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 
+# 首次冷启动服务较慢时，可单独放宽服务启动等待时间
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
+
 # 一次性 OCR 后立即释放 API/GPU 资源
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StopAfter
 

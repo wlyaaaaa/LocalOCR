@@ -1,7 +1,8 @@
 # LocalOCR local API server launcher.
 param(
     [int]$Port = 8765,
-    [string]$HostAddress = "127.0.0.1"
+    [string]$HostAddress = "127.0.0.1",
+    [int]$StartupTimeoutSec = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,9 +35,9 @@ try {
         return
     }
 
-    $hasMutex = $mutex.WaitOne([TimeSpan]::FromSeconds(180))
+    $hasMutex = $mutex.WaitOne([TimeSpan]::FromSeconds($StartupTimeoutSec))
     if (-not $hasMutex) {
-        throw "Timed out waiting for LocalOCR startup lock: $mutexName"
+        throw "Timed out waiting for LocalOCR startup lock after ${StartupTimeoutSec}s: $mutexName"
     }
 
     $existing = Get-LocalOcrHealth
@@ -54,7 +55,7 @@ try {
     $process = Start-Process -FilePath "wsl.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru
     Set-Content -LiteralPath $PidPath -Value $process.Id -Encoding ascii
 
-    $deadline = (Get-Date).AddSeconds(180)
+    $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
     $lastError = $null
     do {
         Start-Sleep -Seconds 2
@@ -69,7 +70,7 @@ try {
         }
     } while ((Get-Date) -lt $deadline)
 
-    Write-Host "[LocalOCR] Server did not become ready before timeout." -ForegroundColor Yellow
+    Write-Host "[LocalOCR] Server did not become ready before ${StartupTimeoutSec}s timeout." -ForegroundColor Yellow
     if (Test-Path -LiteralPath $LogPath) {
         Write-Host "[LocalOCR] Last log lines:" -ForegroundColor Yellow
         Get-Content -LiteralPath $LogPath -Tail 40

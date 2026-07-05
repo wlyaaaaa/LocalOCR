@@ -61,6 +61,13 @@ VL、PDF、公式或首次冷启动可能较慢，调用时保留默认 `-Timeou
 E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 ```
 
+注意：`-TimeoutSec` 是 OCR HTTP 请求等待时间；服务首次冷启动等待时间由
+`-StartupTimeoutSec` 控制，默认 600 秒。若首轮冷启动超时但重试成功，优先显式加：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\某图片.png" -Engine auto -StartupTimeoutSec 900
+```
+
 注意：API 进程只常驻缓存 PP-OCR；VL/PDF 由隔离子进程执行。`/health` 里没有 `vl`
 不代表 VL 不可用，以一次 `-Engine vl` 实际调用结果为准。
 

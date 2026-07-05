@@ -21,6 +21,12 @@ class PathUtilsTest(unittest.TestCase):
             "/mnt/c/Users/example/file.pdf",
         )
 
+    def test_windows_g_drive_path_to_wsl(self):
+        self.assertEqual(
+            str(to_wsl_path(r"G:\ai-coach\.work\ocr")),
+            "/mnt/g/ai-coach/.work/ocr",
+        )
+
     def test_wsl_path_stays_wsl(self):
         self.assertEqual(
             str(to_wsl_path("/mnt/e/LocalOCR/tests/samples/sample.png")),
