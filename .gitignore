@@ -20,6 +20,8 @@ _*.sh
 _check_*.py
 _probe_*.py
 _make_*.py
+!localocr/__init__.py
+!localocr/engines/__init__.py
 
 # 系统
 .DS_Store
