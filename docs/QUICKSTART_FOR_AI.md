@@ -35,6 +35,43 @@ cd /mnt/e/LocalOCR
 scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs
 ```
 
+## 常驻 API（推荐）
+
+高频 OCR、Codex 调用、批量读取课程图片/PDF 时，优先启动常驻服务：
+
+```powershell
+E:\LocalOCR\start_server.ps1
+```
+
+健康检查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/health
+```
+
+识别一个路径：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+```
+
+停止服务：
+
+```powershell
+E:\LocalOCR\stop_server.ps1
+```
+
+API 请求体：
+
+```json
+{
+  "path": "E:\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
+  "engine": "auto",
+  "recursive": false,
+  "write_outputs": true
+}
+```
+
 ## 路由规则（auto 模式）
 
 | 输入 | 引擎 |

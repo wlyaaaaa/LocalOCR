@@ -51,3 +51,26 @@ pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
 
 清华/阿里云镜像偶有波动。install_wsl.sh 用阿里云 + `--retries 5 --timeout 90`。
 可手动换源重试。
+
+## 8. API 服务启动后健康检查超时
+
+**现象**：`start_server.ps1` 等待 `/health` 超时。
+
+**排查**：
+
+```powershell
+wsl -d Ubuntu -e bash -lc "ps aux | grep localocr.server | grep -v grep"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m localocr.server"
+```
+
+常见原因：
+
+- venv 中缺 `fastapi` / `uvicorn` / `python-multipart`，重新运行 `scripts/install_wsl.sh` 或手动安装依赖。
+- GPU 探针失败，按本文第 1 节检查 WSL libcuda。
+- 端口 `8765` 被占用，使用 `.\start_server.ps1 -Port 8766`。
+
+停止残留服务：
+
+```powershell
+E:\LocalOCR\stop_server.ps1
+```

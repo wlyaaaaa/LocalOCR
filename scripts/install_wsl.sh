@@ -30,6 +30,9 @@ env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
     "$VENV/bin/python" -m pip install -i $PYPI --timeout 90 --retries 5 \
     beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl premailer regex \
     safetensors scikit-learn scipy sentencepiece tiktoken tokenizers
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+    "$VENV/bin/python" -m pip install -i $PYPI --timeout 90 --retries 5 \
+    "fastapi>=0.116" "uvicorn[standard]>=0.35" "python-multipart>=0.0.20"
 
 echo "==== [5/5] 预下载所有模型到本地（ModelScope，离线可用） ===="
 export LD_LIBRARY_PATH=/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}

@@ -12,6 +12,8 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
                                     │   cli.py                 │
                                     │   ├─ gpu_probe.py        │
                                     │   ├─ router.py           │
+                                    │   ├─ service.py          │
+                                    │   ├─ server.py           │
                                     │   ├─ engines/            │
                                     │   │   ├─ ppocrv6.py      │
                                     │   │   └─ vl.py           │
@@ -35,6 +37,8 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 |---|---|
 | `gpu_probe.py` | 启动时强制验证 GPU 可用（sm_120+、算子执行），失败即退出，不回退 CPU |
 | `router.py` | 按扩展名分流：图片→ocr，PDF→vl；`--engine` 可覆盖 |
+| `service.py` | 常驻 OCR 运行时，缓存 PP-OCRv6/VL 引擎并串行化推理调用 |
+| `server.py` | FastAPI 本地 API，提供 `/health`、`/ocr/path`、`/ocr/file` |
 | `engines/ppocrv6.py` | PP-OCRv6_medium（det+rec），方向检测/矫正/文本行旋转全开 |
 | `engines/vl.py` | PaddleOCR-VL-1.6，native 后端本地推理 |
 | `pdf_utils.py` | PDF→PNG（pypdfium2），供逐页送引擎 |
@@ -52,3 +56,15 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 | `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` | 关闭 oneDNN（GPU 模式不需要）|
 
 均在 `scripts/run_in_wsl.sh` 中设置。
+
+## 本地 API
+
+`start_server.ps1` 在 WSL 中运行 `python -m localocr.server`，默认只监听
+`127.0.0.1:8765`。服务启动时执行 GPU 探针；第一次请求某类引擎时加载模型，
+之后同一进程内复用模型实例，避免频繁 CLI 冷启动。
+
+| 端点 | 作用 |
+|---|---|
+| `GET /health` | 返回 GPU 摘要和已加载引擎 |
+| `POST /ocr/path` | 识别 Windows/WSL 路径，支持文件或文件夹 |
+| `POST /ocr/file` | 上传单个文件并识别 |

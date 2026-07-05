@@ -12,6 +12,7 @@
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
+- **常驻本地 API**：`start_server.ps1` 启动后模型常驻内存，后续 OCR 复用已加载模型，适合 Codex/脚本频繁调用。
 
 ## 环境
 
@@ -62,6 +63,36 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 - `--out-dir`：输出目录，默认 `outputs`。
 - `--recursive`：输入为文件夹时递归子目录。
 
+**方式 C — 常驻本地 API（推荐给 AI 助手/高频 OCR）**：
+
+```powershell
+# 启动本机 API，只监听 127.0.0.1:8765
+.\start_server.ps1
+
+# 通过 API 调一次 OCR；如果服务未启动，会自动拉起
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+
+# 停止服务
+.\stop_server.ps1
+```
+
+HTTP 入口：
+
+- `GET http://127.0.0.1:8765/health`
+- `POST http://127.0.0.1:8765/ocr/path`
+- `POST http://127.0.0.1:8765/ocr/file`
+
+`/ocr/path` 请求示例：
+
+```json
+{
+  "path": "E:\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
+  "engine": "ocr",
+  "recursive": false,
+  "write_outputs": true
+}
+```
+
 ## 目录
 
 ```
@@ -70,11 +101,16 @@ localocr/        源码
   router.py      自动分流
   engines/       PP-OCRv6 与 VL 两个引擎
   outputs.py     TXT/MD/JSON 输出
+  service.py     常驻服务层，缓存 OCR/VL 引擎
+  server.py      FastAPI 本地 API
   gpu_probe.py   GPU 强制探针
 scripts/         安装/下载/WSL 运行脚本
 tests/           合成样本与测试脚本，见 TEST_REPORT.md
 docs/            架构、模型清单、故障排除、设计文档
-start.bat/ps1    Windows 启动入口
+start.bat/ps1    Windows 一次性 CLI 入口
+start_server.ps1 Windows API 启动入口
+ocr_once.ps1     Windows API 一次性调用入口
+stop_server.ps1  Windows API 停止入口
 ```
 
 ## 文档
