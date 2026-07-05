@@ -23,6 +23,22 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("_pdf_pages/api/vl_subprocess", script)
         self.assertIn("wsl-server.pid", script)
         self.assertIn("Remove-Item", script)
+        self.assertIn("$WslTimeoutSec", script)
+        self.assertIn("WaitForExit", script)
+
+    def test_ocr_once_can_release_api_after_request(self) -> None:
+        script = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[switch]$StopAfter", script)
+        self.assertIn("stop_server.ps1", script)
+        self.assertIn("finally", script)
+        self.assertIn("Write-Warning", script)
+
+    def test_release_resources_wrapper_calls_stop_server(self) -> None:
+        script = (ROOT / "release_resources.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("stop_server.ps1", script)
+        self.assertIn("LocalOCR resources released", script)
 
 
 if __name__ == "__main__":

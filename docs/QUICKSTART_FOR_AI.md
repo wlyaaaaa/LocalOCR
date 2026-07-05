@@ -64,6 +64,18 @@ E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl
 注意：API 进程只常驻缓存 PP-OCR；VL/PDF 由隔离子进程执行。`/health` 里没有 `vl`
 不代表 VL 不可用，以一次 `-Engine vl` 实际调用结果为准。
 
+如果只是一次性读取图片/PDF，或马上要启动 Ollama/本地大模型，可以让调用结束后自动释放：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\某图片.png" -Engine auto -StopAfter
+```
+
+启动其他重 GPU 任务前，也可以显式释放：
+
+```powershell
+E:\LocalOCR\release_resources.ps1
+```
+
 停止服务：
 
 ```powershell

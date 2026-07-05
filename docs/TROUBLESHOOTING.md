@@ -97,3 +97,17 @@ Get-Content E:\LocalOCR\_server\localocr-api.log -Tail 80
 
 `/health` 的 `loaded_engines` 不一定出现 `vl`：VL/PDF 由隔离子进程执行，不常驻在
 API 进程中。判断 VL 是否可用应以一次 `-Engine vl` 调用是否成功为准。
+
+## 10. 启动 Ollama / 本地大模型前释放显存
+
+LocalOCR API 可能常驻 PP-OCR 模型。启动 Ollama、本地大模型或其他重 GPU 任务前：
+
+```powershell
+E:\LocalOCR\release_resources.ps1
+```
+
+如果是一次性 OCR，也可以直接：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\path\image.png" -StopAfter
+```

@@ -75,6 +75,12 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # VL / PDF / 公式等长任务可显式放宽客户端等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 
+# 一次性 OCR 后立即释放 API/GPU 资源
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StopAfter
+
+# 启动本地大模型、游戏或其他重 GPU 任务前，手动释放 LocalOCR
+.\release_resources.ps1
+
 # 停止服务
 .\stop_server.ps1
 ```
@@ -102,6 +108,10 @@ HTTP 入口：
 `ocr_once.ps1` 返回 API JSON；每个输入文件的输出路径位于
 `results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
 
+资源策略：教练/批量 OCR 时可以保持 API 常驻以复用 PP-OCR；切换到 Ollama、本地大模型
+或其他重 GPU 工作负载前，调用 `release_resources.ps1` 或使用 `ocr_once.ps1 -StopAfter`。
+也可以把 `release_resources.ps1` 接到本机 Ollama / 本地大模型启动脚本的前置步骤。
+
 ## 目录
 
 ```
@@ -119,6 +129,7 @@ docs/            架构、模型清单、故障排除、设计文档
 start.bat/ps1    Windows 一次性 CLI 入口
 start_server.ps1 Windows API 启动入口
 ocr_once.ps1     Windows API 一次性调用入口
+release_resources.ps1 Windows 释放 LocalOCR API/GPU 资源入口
 stop_server.ps1  Windows API 停止入口
 ```
 

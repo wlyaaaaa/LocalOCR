@@ -10,7 +10,8 @@ param(
     [string]$OutDir,
     [int]$Port = 8765,
     [string]$HostAddress = "127.0.0.1",
-    [int]$TimeoutSec = 3600
+    [int]$TimeoutSec = 3600,
+    [switch]$StopAfter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,46 +28,56 @@ function Test-LocalOcrApi {
     }
 }
 
-if (-not (Test-LocalOcrApi)) {
-    & (Join-Path $ScriptDir "start_server.ps1") -Port $Port -HostAddress $HostAddress
-}
-
-$body = @{
-    path = $Path
-    engine = $Engine
-    recursive = [bool]$Recursive
-    write_outputs = $true
-}
-if ($OutDir) {
-    $body.out_dir = $OutDir
-}
-
-$json = $body | ConvertTo-Json -Depth 8
-$request = [System.Net.HttpWebRequest]::Create("$base/ocr/path")
-$request.Method = "POST"
-$request.ContentType = "application/json; charset=utf-8"
-$request.Timeout = $TimeoutSec * 1000
-$request.ReadWriteTimeout = $TimeoutSec * 1000
-$bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-$request.ContentLength = $bytes.Length
-$stream = $request.GetRequestStream()
 try {
-    $stream.Write($bytes, 0, $bytes.Length)
-} finally {
-    $stream.Close()
-}
-
-$response = $request.GetResponse()
-try {
-    $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
-    try {
-        $raw = $reader.ReadToEnd()
-    } finally {
-        $reader.Close()
+    if (-not (Test-LocalOcrApi)) {
+        & (Join-Path $ScriptDir "start_server.ps1") -Port $Port -HostAddress $HostAddress
     }
-} finally {
-    $response.Close()
-}
-$result = $raw | ConvertFrom-Json
 
-$result | ConvertTo-Json -Depth 100
+    $body = @{
+        path = $Path
+        engine = $Engine
+        recursive = [bool]$Recursive
+        write_outputs = $true
+    }
+    if ($OutDir) {
+        $body.out_dir = $OutDir
+    }
+
+    $json = $body | ConvertTo-Json -Depth 8
+    $request = [System.Net.HttpWebRequest]::Create("$base/ocr/path")
+    $request.Method = "POST"
+    $request.ContentType = "application/json; charset=utf-8"
+    $request.Timeout = $TimeoutSec * 1000
+    $request.ReadWriteTimeout = $TimeoutSec * 1000
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $request.ContentLength = $bytes.Length
+    $stream = $request.GetRequestStream()
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+    } finally {
+        $stream.Close()
+    }
+
+    $response = $request.GetResponse()
+    try {
+        $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        try {
+            $raw = $reader.ReadToEnd()
+        } finally {
+            $reader.Close()
+        }
+    } finally {
+        $response.Close()
+    }
+    $result = $raw | ConvertFrom-Json
+
+    $result | ConvertTo-Json -Depth 100
+} finally {
+    if ($StopAfter) {
+        try {
+            & (Join-Path $ScriptDir "stop_server.ps1") -Port $Port | Out-Null
+        } catch {
+            Write-Warning "LocalOCR StopAfter cleanup did not complete: $($_.Exception.Message)"
+        }
+    }
+}
