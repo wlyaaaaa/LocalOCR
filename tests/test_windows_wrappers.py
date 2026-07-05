@@ -23,6 +23,14 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("WaitOne([TimeSpan]::FromSeconds($StartupTimeoutSec))", script)
         self.assertIn("AddSeconds($StartupTimeoutSec)", script)
 
+    def test_start_server_waits_for_existing_starting_process(self) -> None:
+        script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("function Get-LocalOcrProcess", script)
+        self.assertIn("Get-Process -Id $serverPid", script)
+        self.assertIn("API startup already in progress", script)
+        self.assertIn("startup timed out while existing process is still running", script)
+
     def test_stop_server_cleans_api_vl_children_and_pid_file(self) -> None:
         script = (ROOT / "stop_server.ps1").read_text(encoding="utf-8")
 

@@ -24,6 +24,67 @@ function Get-LocalOcrHealth {
     return $null
 }
 
+function Get-LocalOcrProcess {
+    if (-not (Test-Path -LiteralPath $PidPath)) {
+        return $null
+    }
+    try {
+        $rawPid = Get-Content -LiteralPath $PidPath -ErrorAction Stop | Select-Object -First 1
+        if (-not $rawPid) {
+            return $null
+        }
+        $serverPid = 0
+        if (-not [int]::TryParse($rawPid.ToString().Trim(), [ref]$serverPid)) {
+            return $null
+        }
+        $process = Get-Process -Id $serverPid -ErrorAction Stop
+        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $serverPid" -ErrorAction Stop
+        if ($processInfo.CommandLine -notlike "*localocr.server*") {
+            return $null
+        }
+        return $process
+    } catch {
+        return $null
+    }
+}
+
+$lastHealthError = $null
+
+function Wait-LocalOcrHealth {
+    param(
+        [datetime]$Deadline
+    )
+
+    $script:lastHealthError = $null
+    do {
+        Start-Sleep -Seconds 2
+        try {
+            $health = Invoke-RestMethod -Uri "http://${HostAddress}:$Port/health" -Method Get -TimeoutSec 15
+            if ($health.ok) {
+                return $health
+            }
+        } catch {
+            $script:lastHealthError = $_
+        }
+    } while ((Get-Date) -lt $Deadline)
+    return $null
+}
+
+function Write-LocalOcrStartupDiagnostics {
+    param(
+        [string]$Message
+    )
+
+    Write-Host $Message -ForegroundColor Yellow
+    if (Test-Path -LiteralPath $LogPath) {
+        Write-Host "[LocalOCR] Last log lines:" -ForegroundColor Yellow
+        Get-Content -LiteralPath $LogPath -Tail 40
+    }
+    if ($script:lastHealthError) {
+        Write-Host "[LocalOCR] Last health-check error: $($script:lastHealthError.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 $mutexName = "Local\LocalOCR-API-$Port"
 $mutex = New-Object System.Threading.Mutex($false, $mutexName)
 $hasMutex = $false
@@ -46,6 +107,19 @@ try {
         return
     }
 
+    $existingProcess = Get-LocalOcrProcess
+    if ($existingProcess) {
+        Write-Host "[LocalOCR] API startup already in progress (PID $($existingProcess.Id)); waiting up to ${StartupTimeoutSec}s ..." -ForegroundColor Cyan
+        $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
+        $health = Wait-LocalOcrHealth -Deadline $deadline
+        if ($health) {
+            Write-Host "[LocalOCR] API ready. GPU: $($health.gpu)" -ForegroundColor Green
+            return
+        }
+        Write-LocalOcrStartupDiagnostics -Message "[LocalOCR] Server did not become ready before ${StartupTimeoutSec}s timeout."
+        throw "LocalOCR API startup timed out while existing process is still running."
+    }
+
     Write-Host "[LocalOCR] Starting API server at http://${HostAddress}:$Port ..." -ForegroundColor Cyan
     Write-Host "[LocalOCR] Log: $LogPath" -ForegroundColor DarkGray
     $wslLogPath = "/mnt/e/LocalOCR/_server/localocr-api.log"
@@ -56,28 +130,12 @@ try {
     Set-Content -LiteralPath $PidPath -Value $process.Id -Encoding ascii
 
     $deadline = (Get-Date).AddSeconds($StartupTimeoutSec)
-    $lastError = $null
-    do {
-        Start-Sleep -Seconds 2
-        try {
-            $health = Invoke-RestMethod -Uri "http://${HostAddress}:$Port/health" -Method Get -TimeoutSec 15
-            if ($health.ok) {
-                Write-Host "[LocalOCR] API ready. GPU: $($health.gpu)" -ForegroundColor Green
-                return
-            }
-        } catch {
-            $lastError = $_
-        }
-    } while ((Get-Date) -lt $deadline)
-
-    Write-Host "[LocalOCR] Server did not become ready before ${StartupTimeoutSec}s timeout." -ForegroundColor Yellow
-    if (Test-Path -LiteralPath $LogPath) {
-        Write-Host "[LocalOCR] Last log lines:" -ForegroundColor Yellow
-        Get-Content -LiteralPath $LogPath -Tail 40
+    $health = Wait-LocalOcrHealth -Deadline $deadline
+    if ($health) {
+        Write-Host "[LocalOCR] API ready. GPU: $($health.gpu)" -ForegroundColor Green
+        return
     }
-    if ($lastError) {
-        Write-Host "[LocalOCR] Last health-check error: $($lastError.Exception.Message)" -ForegroundColor Yellow
-    }
+    Write-LocalOcrStartupDiagnostics -Message "[LocalOCR] Server did not become ready before ${StartupTimeoutSec}s timeout."
     throw "LocalOCR API server startup timed out."
 } finally {
     if ($hasMutex) {

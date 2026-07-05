@@ -68,7 +68,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m localo
 - venv 中缺 `fastapi` / `uvicorn` / `python-multipart`，重新运行 `scripts/install_wsl.sh` 或手动安装依赖。
 - GPU 探针失败，按本文第 1 节检查 WSL libcuda。
 - 端口 `8765` 被占用，使用 `.\start_server.ps1 -Port 8766`。
-- 首次冷启动超过启动等待时间。`ocr_once.ps1 -TimeoutSec` 只控制 OCR 请求等待，不控制 API 服务启动；冷启动慢但重试成功时，改用 `-StartupTimeoutSec 900` 或先单独运行 `.\start_server.ps1 -StartupTimeoutSec 900`。
+- 首次冷启动超过启动等待时间。`ocr_once.ps1 -TimeoutSec` 只控制 OCR 请求等待，不控制 API 服务启动；冷启动慢但重试成功时，改用 `-StartupTimeoutSec 900` 或先单独运行 `.\start_server.ps1 -StartupTimeoutSec 900`。`start_server.ps1` 会用启动锁和 `wsl-server.pid` 识别正在启动的 API 进程，重试时等待现有进程变为 ready，而不是再启动第二个服务。
 
 停止残留服务：
 
