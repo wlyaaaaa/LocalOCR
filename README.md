@@ -13,6 +13,7 @@
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
 - **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
+- **Codex 防卡入口**：`ocr_smart.ps1` 先做轻量分流和后台任务探测，再用外层超时包住 `ocr_once.ps1`，避免 PowerShell 长时间占住 AI 回合。
 
 ## 环境
 
@@ -66,6 +67,12 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 **方式 C — 常驻本地 API（推荐给 AI 助手/高频 OCR）**：
 
 ```powershell
+# Codex / AI 助手默认入口：简单 PDF 会自动改走 OCR，且外层最多等待 120 秒
+.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
+
+# 只做轻量预检，不提交 OCR 任务
+.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\sample_scan.pdf" -TriageOnly
+
 # 启动本机 API，只监听 127.0.0.1:8765
 .\start_server.ps1
 
@@ -108,8 +115,10 @@ HTTP 入口：
 }
 ```
 
-`ocr_once.ps1` 返回 API JSON；每个输入文件的输出路径位于
+`ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
 `results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
+若外层等待超时或发现已有 VL 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
+或 `status=active_vl_task`，并给出 `recommendation=do_not_blindly_retry`。
 
 资源策略：教练/批量 OCR 时可以保持 API 常驻以复用 PP-OCR；切换到 Ollama、本地大模型
 或其他重 GPU 工作负载前，调用 `release_resources.ps1` 或使用 `ocr_once.ps1 -StopAfter`。
@@ -131,6 +140,7 @@ tests/           合成样本与测试脚本，见 TEST_REPORT.md
 docs/            架构、模型清单、故障排除、设计文档
 start.bat/ps1    Windows 一次性 CLI 入口
 start_server.ps1 Windows API 启动入口
+ocr_smart.ps1    Windows Codex/AI 防卡智能入口
 ocr_once.ps1     Windows API 一次性调用入口
 release_resources.ps1 Windows 释放 LocalOCR API/GPU 资源入口
 stop_server.ps1  Windows API 停止入口

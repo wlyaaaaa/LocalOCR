@@ -61,6 +61,33 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("stop_server.ps1", script)
         self.assertIn("LocalOCR resources released", script)
 
+    def test_ocr_smart_wrapper_exists(self) -> None:
+        self.assertTrue((ROOT / "ocr_smart.ps1").exists())
+
+    def test_ocr_smart_routes_auto_pdf_to_ocr_for_codex(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Resolve-SmartEngine", script)
+        self.assertIn('".pdf"', script)
+        self.assertIn('$RequestedEngine -ne "auto"', script)
+        self.assertIn("simple_pdf_prefers_ocr", script)
+
+    def test_ocr_smart_has_outer_timeout_and_compact_timeout_json(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[int]$OuterTimeoutSec = 120", script)
+        self.assertIn("WaitForExit($TimeoutSec * 1000)", script)
+        self.assertIn("-TimeoutSec $OuterTimeoutSec", script)
+        self.assertIn("client_timeout", script)
+        self.assertIn("do_not_blindly_retry", script)
+
+    def test_ocr_smart_checks_active_vl_before_work(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Get-LocalOcrActiveTasks", script)
+        self.assertIn("localocr.cli|vl_subprocess", script)
+        self.assertIn("active_vl_task", script)
+
 
 if __name__ == "__main__":
     unittest.main()

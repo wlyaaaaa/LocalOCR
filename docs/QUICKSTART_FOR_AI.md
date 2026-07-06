@@ -43,13 +43,29 @@ scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs
 E:\LocalOCR\start_server.ps1
 ```
 
+Codex / AI 助手默认先用 smart wrapper，避免 PowerShell 长时间卡住当前回合：
+
+```powershell
+E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -OuterTimeoutSec 120
+```
+
+`ocr_smart.ps1` 会先查后台 `localocr.cli` / `vl_subprocess`，再决定是否提交任务。
+简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF 在 smart `auto`
+下会自动改用 `-Engine ocr`；复杂版面、表格、公式、多栏材料需要 VL 时显式传 `-Engine vl`。
+
+只想省 token 做预检，不提交 OCR：
+
+```powershell
+E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
+```
+
 健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
-识别一个路径：
+底层 wrapper 仍可直接识别一个路径：
 
 ```powershell
 E:\LocalOCR\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
@@ -108,16 +124,17 @@ API 请求体：
 | PDF | PaddleOCR-VL-1.6 |
 | 文件夹 | 按每个文件类型分别路由 |
 
-给 AI 助手的实用例外：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
-优先显式用 `-Engine ocr`。`auto` 会把所有 PDF 送入 VL，可能超过 Codex 外层 shell
-超时；如果看到“无输出 + exit code 124”，先检查后台 `localocr.cli` / `vl_subprocess`
-和输出目录，不要盲目重复提交同一份 PDF。
+给 AI 助手的实用例外：`ocr_smart.ps1 -Engine auto` 会把简单扫描 PDF、法律表单、
+送达地址确认书、空白表格和纯文字 PDF 自动改走 `ocr`。如果直接调用 `ocr_once.ps1`
+或底层 API，`auto` 仍会把 PDF 送入 VL，可能超过 Codex 外层 shell 超时；看到
+“无输出 + exit code 124”时，先检查后台 `localocr.cli` / `vl_subprocess` 和输出目录，
+不要盲目重复提交同一份 PDF。
 
 ## 输出
 
 拖拽和一次性 CLI：每个输入文件 → `outputs/文件名.txt` + `.md` + `.json`
 
-常驻 API / `ocr_once.ps1`：返回 JSON 的 `results[].output_files` 记录输出路径，
+常驻 API / `ocr_smart.ps1` / `ocr_once.ps1`：返回 JSON 的 `results[].output_files` 记录输出路径，
 默认写到 `outputs/api/文件名.txt` + `.md` + `.json`
 
 - TXT：纯文本按页
