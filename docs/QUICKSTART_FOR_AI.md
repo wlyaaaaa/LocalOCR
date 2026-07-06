@@ -108,6 +108,11 @@ API 请求体：
 | PDF | PaddleOCR-VL-1.6 |
 | 文件夹 | 按每个文件类型分别路由 |
 
+给 AI 助手的实用例外：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
+优先显式用 `-Engine ocr`。`auto` 会把所有 PDF 送入 VL，可能超过 Codex 外层 shell
+超时；如果看到“无输出 + exit code 124”，先检查后台 `localocr.cli` / `vl_subprocess`
+和输出目录，不要盲目重复提交同一份 PDF。
+
 ## 输出
 
 拖拽和一次性 CLI：每个输入文件 → `outputs/文件名.txt` + `.md` + `.json`

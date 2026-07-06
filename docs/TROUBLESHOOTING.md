@@ -99,7 +99,30 @@ Get-Content E:\LocalOCR\_server\localocr-api.log -Tail 80
 `/health` 的 `loaded_engines` 不一定出现 `vl`：VL/PDF 由隔离子进程执行，不常驻在
 API 进程中。判断 VL 是否可用应以一次 `-Engine vl` 调用是否成功为准。
 
-## 10. 启动 Ollama / 本地大模型前释放显存
+## 10. Codex / shell 显示无输出并以 124 退出
+
+`124` 通常是外层 shell / Codex 工具超时，不是 `ocr_once.ps1 -TimeoutSec` 返回。
+如果请求是 PDF 且使用 `-Engine auto`，服务端可能已经把任务交给 VL 子进程继续运行。
+
+不要立刻重复提交同一份 PDF。先检查：
+
+```powershell
+wsl -d Ubuntu -e bash -lc "pgrep -af 'localocr.cli|vl_subprocess|python.*localocr'"
+Invoke-RestMethod http://127.0.0.1:8765/health
+Get-ChildItem E:\LocalOCR\outputs\api | Sort-Object LastWriteTime -Descending | Select-Object -First 10
+```
+
+简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF 优先使用：
+
+```powershell
+E:\LocalOCR\ocr_once.ps1 "E:\path\scan.pdf" -Engine ocr -TimeoutSec 3600 -StartupTimeoutSec 900
+```
+
+`auto` 会把 PDF 送入 VL；VL 更适合复杂版面、表格、公式和多栏文档，但可能远慢于 PP-OCR。
+若调用方已经 124 退出且后台 VL 子进程长时间不产出，可以等待、读取已生成输出，
+或用 `release_resources.ps1` / `stop_server.ps1` 清理后改用 `-Engine ocr`。
+
+## 11. 启动 Ollama / 本地大模型前释放显存
 
 LocalOCR API 可能常驻 PP-OCR 模型。启动 Ollama、本地大模型或其他重 GPU 任务前：
 
