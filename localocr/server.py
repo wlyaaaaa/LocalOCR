@@ -16,6 +16,7 @@ from .service import OCRService
 class OCRPathRequest(BaseModel):
     path: str = Field(..., description="Windows or WSL path to image/PDF/folder")
     engine: Literal["auto", "ocr", "vl"] = "auto"
+    model: str | None = Field(None, description="Concrete model profile id; optional")
     recursive: bool = False
     out_dir: str | None = None
     write_outputs: bool = True
@@ -23,6 +24,7 @@ class OCRPathRequest(BaseModel):
 
 class OCRUploadOptions(BaseModel):
     engine: Literal["auto", "ocr", "vl"] = "auto"
+    model: str | None = None
     write_outputs: bool = True
 
 
@@ -49,6 +51,7 @@ def health() -> dict:
         "ok": True,
         "gpu": service.gpu_summary,
         "loaded_engines": service.loaded_engines,
+        "loaded_models": service.loaded_models,
     }
 
 
@@ -61,6 +64,7 @@ def ocr_path(req: OCRPathRequest) -> dict:
         return service.process_inputs(
             [path],
             engine_choice=req.engine,
+            model_choice=req.model,
             recursive=req.recursive,
             out_dir=out_dir,
             write_files=req.write_outputs,
@@ -73,6 +77,7 @@ def ocr_path(req: OCRPathRequest) -> dict:
 async def ocr_file(
     file: UploadFile = File(...),
     engine: Literal["auto", "ocr", "vl"] = "auto",
+    model: str | None = None,
     write_outputs: bool = True,
 ) -> dict:
     suffix = Path(file.filename or "upload").suffix or ".png"
@@ -85,6 +90,7 @@ async def ocr_file(
             return service.process_inputs(
                 [target],
                 engine_choice=engine,
+                model_choice=model,
                 recursive=False,
                 out_dir=Path("outputs/api_uploads"),
                 write_files=write_outputs,

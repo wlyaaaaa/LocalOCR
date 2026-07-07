@@ -11,6 +11,7 @@
 - 运行环境：WSL2 Ubuntu 24.04，venv 在 `/root/localocr-venv`
 - PaddlePaddle GPU 3.3.1 (cu129) + PaddleOCR 3.7.0 已装
 - 模型已下载到 `/root/.paddlex/official_models/`（PP-OCRv6_medium + PaddleOCR-VL-1.6），可离线
+- 模型选择已通过 `localocr/model_profiles.json` 解耦；`ocr` / `vl` 是默认 profile 别名，可用 `--model` / `-Model` 指定具体 profile
 - GPU：RTX 5090D，Blackwell sm_120，已验证可用
 
 ## 命令行
@@ -32,7 +33,7 @@
 
 ```bash
 cd /mnt/e/LocalOCR
-scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs
+scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --model ppocrv6-medium --out-dir outputs
 ```
 
 ## 常驻 API（推荐）
@@ -52,6 +53,8 @@ E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -OuterTimeoutSec 120
 `ocr_smart.ps1` 会先查后台 `localocr.cli` / `vl_subprocess`，再决定是否提交任务。
 简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF 在 smart `auto`
 下会自动改用 `-Engine ocr`；复杂版面、表格、公式、多栏材料需要 VL 时显式传 `-Engine vl`。
+如果用户指定具体模型，用 `-Model <profile-id>`；此时 smart wrapper 不会把 PDF 的 `auto` 强行改成 OCR，
+而是把 profile 交给 API registry 决定。
 
 只想省 token 做预检，不提交 OCR：
 
@@ -111,6 +114,7 @@ API 请求体：
 {
   "path": "E:\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
   "engine": "auto",
+  "model": "ppocrv6-medium",
   "recursive": false,
   "write_outputs": true
 }
@@ -123,6 +127,11 @@ API 请求体：
 | 图片（png/jpg/webp/bmp/tif） | PP-OCRv6_medium |
 | PDF | PaddleOCR-VL-1.6 |
 | 文件夹 | 按每个文件类型分别路由 |
+
+`--engine` / `-Engine` 决定路由族；`--model` / `-Model` 决定具体 profile。未指定 `model`
+时，`ocr` 默认 `ppocrv6-medium`，`vl` 默认 `paddleocr-vl-1.6`。新增模型时优先新增
+`localocr/model_profiles.json` 条目和对应 adapter，不要把模型名写死在调用层。
+如果刚改过 profile 或 adapter，先重启 LocalOCR API 再验收，否则旧常驻进程可能仍使用旧 registry。
 
 给 AI 助手的实用例外：`ocr_smart.ps1 -Engine auto` 会把简单扫描 PDF、法律表单、
 送达地址确认书、空白表格和纯文字 PDF 自动改走 `ocr`。如果直接调用 `ocr_once.ps1`

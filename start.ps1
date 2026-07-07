@@ -1,5 +1,5 @@
 # LocalOCR Windows 启动入口（PowerShell）
-# 拖入文件/文件夹/PDF，或：.\start.ps1 "C:\路径\文件或文件夹" [--engine auto|ocr|vl]
+# 拖入文件/文件夹/PDF，或：.\start.ps1 "C:\路径\文件或文件夹" [--engine auto|ocr|vl] [--model profile-id]
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Args
@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 if (-not $Args -or $Args.Count -eq 0) {
-    Write-Host "用法：把图片 / PDF / 文件夹拖到 start.bat 上，或：.\start.ps1 `"路径`" [--engine auto|ocr|vl]"
+    Write-Host "用法：把图片 / PDF / 文件夹拖到 start.bat 上，或：.\start.ps1 `"路径`" [--engine auto|ocr|vl] [--model profile-id]"
     exit 1
 }
 

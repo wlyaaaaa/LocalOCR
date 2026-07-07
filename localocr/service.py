@@ -10,11 +10,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .engines import get_engine
 from .gpu_probe import format_probe, probe_gpu
+from .model_registry import ModelProfile, get_engine, select_model_profile
 from .outputs import safe_output_stem, write_outputs
 from .pdf_utils import render_pdf_to_files
-from .router import collect_files, is_pdf, route_engine
+from .router import collect_files, is_pdf
 
 
 def run_isolated_command(
@@ -94,6 +94,7 @@ class OCRService:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.isolated_timeout_sec = isolated_timeout_sec
         self._engine_cache: dict[str, Any] = {}
+        self._engine_profiles: dict[str, ModelProfile] = {}
         self._lock = threading.RLock()
         self.gpu_info = probe_gpu() if probe_on_start else None
 
@@ -105,17 +106,22 @@ class OCRService:
 
     @property
     def loaded_engines(self) -> list[str]:
+        return sorted({profile.engine for profile in self._engine_profiles.values()})
+
+    @property
+    def loaded_models(self) -> list[str]:
         return sorted(self._engine_cache)
 
-    def _engine(self, key: str):
-        if key not in self._engine_cache:
-            self._engine_cache[key] = get_engine(key, device=self.device)
-        return self._engine_cache[key]
+    def _engine(self, profile: ModelProfile):
+        if profile.id not in self._engine_cache:
+            self._engine_cache[profile.id] = get_engine(profile.id, device=self.device)
+            self._engine_profiles[profile.id] = profile
+        return self._engine_cache[profile.id]
 
     def _project_path(self, path: Path) -> Path:
         return path if path.is_absolute() else self.project_root / path
 
-    def _process_vl_isolated(self, path: Path, output_dir: Path) -> dict[str, Any]:
+    def _process_vl_isolated(self, path: Path, output_dir: Path, profile: ModelProfile) -> dict[str, Any]:
         """Run PaddleOCR-VL in a child process to keep the API worker stable."""
         output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir = self.tmp_dir / "vl_subprocess"
@@ -125,7 +131,9 @@ class OCRService:
             "localocr.cli",
             str(path),
             "--engine",
-            "vl",
+            profile.engine,
+            "--model",
+            profile.id,
             "--out-dir",
             str(output_dir),
             "--tmp-dir",
@@ -151,10 +159,11 @@ class OCRService:
             )
         result = json.loads(json_path.read_text(encoding="utf-8"))
         result["source_file"] = str(path)
-        result["engine_key"] = "vl"
+        result["engine_key"] = profile.engine
+        result["model_id"] = profile.id
         return result
 
-    def _ocr_pdf_with_engine(self, pdf_path: Path, engine_key: str, engine) -> dict[str, Any]:
+    def _ocr_pdf_with_engine(self, pdf_path: Path, profile: ModelProfile, engine) -> dict[str, Any]:
         images = render_pdf_to_files(pdf_path, out_dir=self.tmp_dir)
         pages: list[dict[str, Any]] = []
         for i, img in enumerate(images):
@@ -162,29 +171,29 @@ class OCRService:
             for page in result.get("pages", []):
                 page["page_index"] = i
                 pages.append(page)
-        if engine_key == "vl":
-            return {
-                "engine": "PaddleOCR-VL-1.6",
-                "model": engine.model_name,
-                "device": engine.device,
-                "pages": pages,
-            }
         return {
-            "engine": "PP-OCRv6_medium",
+            "engine": engine.engine_name,
             "model": engine.model_name,
+            "model_id": profile.id,
             "device": engine.device,
             "pages": pages,
         }
 
-    def process_file(self, path: Path, engine_choice: str = "auto") -> dict[str, Any]:
-        engine_key = route_engine(path, engine_choice)
-        engine = self._engine(engine_key)
+    def process_file(
+        self,
+        path: Path,
+        engine_choice: str = "auto",
+        model_choice: str | None = None,
+    ) -> dict[str, Any]:
+        profile = select_model_profile(path, engine_choice=engine_choice, model_choice=model_choice)
+        engine = self._engine(profile)
         if is_pdf(path):
-            result = self._ocr_pdf_with_engine(path, engine_key, engine)
+            result = self._ocr_pdf_with_engine(path, profile, engine)
         else:
             result = engine.predict_image(str(path))
         result["source_file"] = str(path)
-        result["engine_key"] = engine_key
+        result["engine_key"] = profile.engine
+        result["model_id"] = profile.id
         return result
 
     def process_inputs(
@@ -192,6 +201,7 @@ class OCRService:
         inputs: list[str | Path],
         *,
         engine_choice: str = "auto",
+        model_choice: str | None = None,
         recursive: bool = False,
         out_dir: str | Path | None = None,
         write_files: bool = True,
@@ -204,17 +214,17 @@ class OCRService:
         results: list[dict[str, Any]] = []
         with self._lock:
             for file_path in files:
-                engine_key = route_engine(file_path, engine_choice)
-                if engine_key == "vl":
+                profile = select_model_profile(file_path, engine_choice=engine_choice, model_choice=model_choice)
+                if profile.engine == "vl":
                     if write_files:
-                        result = self._process_vl_isolated(file_path, output_dir)
+                        result = self._process_vl_isolated(file_path, output_dir, profile)
                     else:
                         runtime_dir = self.project_root / "_server"
                         runtime_dir.mkdir(parents=True, exist_ok=True)
                         with tempfile.TemporaryDirectory(prefix="localocr-vl-", dir=runtime_dir) as tmp:
-                            result = self._process_vl_isolated(file_path, Path(tmp))
+                            result = self._process_vl_isolated(file_path, Path(tmp), profile)
                 else:
-                    result = self.process_file(file_path, engine_choice)
+                    result = self.process_file(file_path, engine_choice, model_choice)
                 if write_files and "output_files" not in result:
                     paths = write_outputs(result, file_path, output_dir)
                     result["output_files"] = {k: str(v) for k, v in paths.items()}
@@ -232,5 +242,6 @@ class OCRService:
             "device": self.device,
             "gpu": self.gpu_summary,
             "loaded_engines": self.loaded_engines,
+            "loaded_models": self.loaded_models,
             "results": results,
         }

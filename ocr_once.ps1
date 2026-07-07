@@ -5,6 +5,7 @@ param(
 
     [ValidateSet("auto", "ocr", "vl")]
     [string]$Engine = "auto",
+    [string]$Model,
 
     [switch]$Recursive,
     [string]$OutDir,
@@ -39,6 +40,9 @@ try {
         engine = $Engine
         recursive = [bool]$Recursive
         write_outputs = $true
+    }
+    if ($Model) {
+        $body.model = $Model
     }
     if ($OutDir) {
         $body.out_dir = $OutDir

@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 
 from .gpu_probe import probe_gpu, format_probe, GPUProbeError
-from .router import collect_files, route_engine, is_pdf
-from .engines import get_engine
+from .router import collect_files, is_pdf
+from .model_registry import get_engine, select_model_profile
 from .outputs import write_outputs
 from .pdf_utils import render_pdf_to_files
 
@@ -22,8 +22,9 @@ def _ocr_pdf_with_ocr_engine(pdf_path: Path, engine, tmp_dir: Path) -> dict:
             p["page_index"] = i
             pages.append(p)
     return {
-        "engine": "PP-OCRv6_medium",
+        "engine": engine.engine_name,
         "model": engine.model_name,
+        "model_id": engine.profile_id,
         "device": engine.device,
         "pages": pages,
     }
@@ -39,27 +40,30 @@ def _ocr_pdf_with_vl(pdf_path: Path, engine, tmp_dir: Path) -> dict:
             p["page_index"] = i
             pages.append(p)
     return {
-        "engine": "PaddleOCR-VL-1.6",
+        "engine": engine.engine_name,
         "model": engine.model_name,
+        "model_id": engine.profile_id,
         "device": engine.device,
         "pages": pages,
     }
 
 
 def process_one(path: Path, engine_choice: str, device: str, tmp_dir: Path,
-                engine_cache: dict) -> dict:
-    eng_key = route_engine(path, engine_choice)
-    if eng_key not in engine_cache:
-        engine_cache[eng_key] = get_engine(eng_key, device=device)
-    engine = engine_cache[eng_key]
+                engine_cache: dict, model_choice: str | None = None) -> dict:
+    profile = select_model_profile(path, engine_choice=engine_choice, model_choice=model_choice)
+    if profile.id not in engine_cache:
+        engine_cache[profile.id] = get_engine(profile.id, device=device)
+    engine = engine_cache[profile.id]
     if is_pdf(path):
-        if eng_key == "vl":
+        if profile.engine == "vl":
             result = _ocr_pdf_with_vl(path, engine, tmp_dir)
         else:
             result = _ocr_pdf_with_ocr_engine(path, engine, tmp_dir)
     else:
         result = engine.predict_image(str(path))
     result["source_file"] = str(path)
+    result["engine_key"] = profile.engine
+    result["model_id"] = profile.id
     return result
 
 
@@ -71,6 +75,8 @@ def main() -> int:
     parser.add_argument("inputs", nargs="+", help="图片 / PDF / 文件夹路径。")
     parser.add_argument("--engine", choices=["auto", "ocr", "vl"], default="auto",
                         help="auto=自动分流(默认)；ocr=强制PP-OCRv6_medium；vl=强制PaddleOCR-VL-1.6。")
+    parser.add_argument("--model", default=None,
+                        help="具体模型 profile id 或 ocr/vl 默认别名；指定后覆盖 auto 的默认 profile。")
     parser.add_argument("--out-dir", default="outputs", help="输出目录(默认 outputs)。")
     parser.add_argument("--recursive", action="store_true", help="文件夹递归扫描。")
     parser.add_argument("--device", default="gpu:0", help="设备(默认 gpu:0)。")
@@ -101,12 +107,12 @@ def main() -> int:
     for i, f in enumerate(files, 1):
         t0 = time.time()
         try:
-            eng_key = route_engine(f, args.engine)
-            result = process_one(f, args.engine, args.device, tmp_dir, engine_cache)
+            profile = select_model_profile(f, engine_choice=args.engine, model_choice=args.model)
+            result = process_one(f, args.engine, args.device, tmp_dir, engine_cache, args.model)
             paths = write_outputs(result, f, out_dir)
             dt = time.time() - t0
             nblocks = sum(len(p.get("blocks", [])) for p in result.get("pages", []))
-            print(f"[{i}/{len(files)}] {f.name} -> 引擎={eng_key} | {nblocks}块 | {dt:.1f}s | "
+            print(f"[{i}/{len(files)}] {f.name} -> 引擎={profile.engine} | 模型={profile.id} | {nblocks}块 | {dt:.1f}s | "
                   f"{paths['md'].name}", flush=True)
             ok += 1
         except Exception as e:

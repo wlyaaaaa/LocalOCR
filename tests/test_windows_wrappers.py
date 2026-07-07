@@ -85,8 +85,24 @@ class WindowsWrapperTest(unittest.TestCase):
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
         self.assertIn("Get-LocalOcrActiveTasks", script)
-        self.assertIn("localocr.cli|vl_subprocess", script)
+        self.assertIn("[l]ocalocr[.]cli", script)
+        self.assertIn("[v]l_subprocess", script)
         self.assertIn("active_vl_task", script)
+
+    def test_ocr_smart_active_task_probe_avoids_matching_itself(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[l]ocalocr[.]cli|[v]l_subprocess", script)
+
+    def test_api_wrappers_accept_model_profile_override(self) -> None:
+        once = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
+        smart = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[string]$Model", once)
+        self.assertIn("body.model", once)
+        self.assertIn("[string]$Model", smart)
+        self.assertIn("-Model", smart)
+        self.assertIn("requested_model", smart)
 
 
 if __name__ == "__main__":

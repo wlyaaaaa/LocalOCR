@@ -1,5 +1,22 @@
 # 模型清单与来源
 
+## Profile 注册表
+
+模型选择由 `localocr/model_profiles.json` 管理，运行时通过 `localocr/model_registry.py` 解析。
+`ocr` / `vl` 只是兼容别名：
+
+| 别名 | 默认 profile id | 当前 adapter |
+|---|---|---|
+| `ocr` | `ppocrv6-medium` | `localocr.engines.ppocrv6:PPOCRv6Engine` |
+| `vl` | `paddleocr-vl-1.6` | `localocr.engines.vl:VLEngine` |
+
+调用层优先使用 `--engine auto|ocr|vl` 做路由；需要指定具体模型时使用
+`--model <profile-id>` 或 Windows wrapper 的 `-Model <profile-id>`。新增或替换模型时，
+先新增 profile 和 adapter，再用样本图/PDF 做 smoke test；不要把模型名硬编码到
+`cli.py`、`server.py`、`service.py` 或 PowerShell wrapper 里。
+常驻 API 会缓存已加载的 registry 和模型实例；修改 profile 或 adapter 后，先执行
+`stop_server.ps1` / `start_server.ps1` 或 `release_resources.ps1`，再做验收。
+
 ## 已下载模型（本地缓存：`/root/.paddlex/official_models/`）
 
 ### PP-OCRv6_medium（图片/截图/聊天记录/网页图/纯文字扫描件）

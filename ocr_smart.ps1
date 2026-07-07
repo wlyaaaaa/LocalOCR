@@ -5,6 +5,7 @@ param(
 
     [ValidateSet("auto", "ocr", "vl")]
     [string]$Engine = "auto",
+    [string]$Model,
 
     [switch]$Recursive,
     [string]$OutDir,
@@ -52,8 +53,16 @@ function Quote-PowerShellString {
 function Resolve-SmartEngine {
     param(
         [Parameter(Mandatory = $true)][string]$InputPath,
-        [Parameter(Mandatory = $true)][string]$RequestedEngine
+        [Parameter(Mandatory = $true)][string]$RequestedEngine,
+        [AllowNull()][string]$RequestedModel
     )
+
+    if ($RequestedModel) {
+        return [pscustomobject]@{
+            engine = $RequestedEngine
+            reason = "explicit_model"
+        }
+    }
 
     if ($RequestedEngine -ne "auto") {
         return [pscustomobject]@{
@@ -123,7 +132,7 @@ function Invoke-WslBashBounded {
 }
 
 function Get-LocalOcrActiveTasks {
-    $probe = Invoke-WslBashBounded -Command "timeout 8s pgrep -af 'localocr.cli|vl_subprocess' || true" -TimeoutSec 10
+    $probe = Invoke-WslBashBounded -Command "timeout 8s pgrep -af '[l]ocalocr[.]cli|[v]l_subprocess' || true" -TimeoutSec 10
     if ($probe.timed_out) {
         return [pscustomobject]@{
             timed_out = $true
@@ -173,7 +182,7 @@ function Select-JsonObjectText {
     return $Text.Substring($start, $end - $start + 1)
 }
 
-$route = Resolve-SmartEngine -InputPath $Path -RequestedEngine $Engine
+$route = Resolve-SmartEngine -InputPath $Path -RequestedEngine $Engine -RequestedModel $Model
 $active = Get-LocalOcrActiveTasks
 $health = Get-LocalOcrHealthCompact -Port $Port -HostAddress $HostAddress
 
@@ -182,6 +191,7 @@ if ($TriageOnly) {
         ok = $true
         status = "triage_only"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         active_tasks_count = @($active.tasks).Count
@@ -198,6 +208,7 @@ if ((@($active.tasks).Count -gt 0) -and (-not $Force)) {
         status = "active_vl_task"
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         active_tasks_count = @($active.tasks).Count
@@ -213,6 +224,9 @@ $commandParts = @(
     "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $route.engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
 )
+if ($Model) {
+    $commandParts[-1] += " -Model $(Quote-PowerShellString $Model)"
+}
 if ($Recursive) {
     $commandParts[-1] += " -Recursive"
 }
@@ -234,6 +248,7 @@ if ($client.timed_out) {
         status = "client_timeout"
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         outer_timeout_sec = $OuterTimeoutSec
@@ -252,6 +267,7 @@ if ($client.exit_code -ne 0) {
         status = "client_failed"
         recommendation = "inspect_stderr_and_health"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         exit_code = $client.exit_code
@@ -269,6 +285,7 @@ if (-not $jsonText) {
         status = "client_output_parse_failed"
         recommendation = "inspect_stdout_tail"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         stdout_tail = Get-TextTail $client.stdout
@@ -281,6 +298,7 @@ try {
     $result = $jsonText | ConvertFrom-Json
     $result | Add-Member -NotePropertyName smart -NotePropertyValue ([pscustomobject]@{
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         outer_timeout_sec = $OuterTimeoutSec
@@ -292,6 +310,7 @@ try {
         status = "client_output_parse_failed"
         recommendation = "inspect_stdout_tail"
         requested_engine = $Engine
+        requested_model = $Model
         effective_engine = $route.engine
         route_reason = $route.reason
         error = $_.Exception.Message

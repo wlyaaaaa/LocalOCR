@@ -21,3 +21,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["localocr", "localocr.engines"]
+
+[tool.setuptools.package-data]
+localocr = ["model_profiles.json"]

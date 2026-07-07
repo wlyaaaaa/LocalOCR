@@ -1,0 +1,56 @@
+{
+  "defaults": {
+    "ocr": "ppocrv6-medium",
+    "vl": "paddleocr-vl-1.6"
+  },
+  "profiles": [
+    {
+      "id": "ppocrv6-medium",
+      "engine": "ocr",
+      "adapter": "localocr.engines.ppocrv6:PPOCRv6Engine",
+      "display_name": "PP-OCRv6_medium (det + rec)",
+      "result_engine_name": "PP-OCRv6_medium",
+      "backend": "paddleocr.PaddleOCR",
+      "pipeline_version": "PP-OCRv6",
+      "capabilities": [
+        "plain_ocr",
+        "image_ocr",
+        "simple_pdf",
+        "document_orientation",
+        "document_unwarping",
+        "textline_orientation"
+      ],
+      "options": {
+        "ocr_version": "PP-OCRv6",
+        "lang": "ch",
+        "use_doc_orientation_classify": true,
+        "use_doc_unwarping": true,
+        "use_textline_orientation": true
+      }
+    },
+    {
+      "id": "paddleocr-vl-1.6",
+      "engine": "vl",
+      "adapter": "localocr.engines.vl:VLEngine",
+      "display_name": "PaddleOCR-VL-1.6",
+      "result_engine_name": "PaddleOCR-VL-1.6",
+      "backend": "paddleocr.PaddleOCRVL",
+      "pipeline_version": "v1.6",
+      "capabilities": [
+        "layout_vl",
+        "complex_pdf",
+        "table",
+        "formula",
+        "multi_column",
+        "document_orientation",
+        "document_unwarping"
+      ],
+      "options": {
+        "pipeline_version": "v1.6",
+        "vl_rec_backend": "native",
+        "use_doc_orientation_classify": true,
+        "use_doc_unwarping": true
+      }
+    }
+  ]
+}

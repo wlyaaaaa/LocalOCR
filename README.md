@@ -10,6 +10,7 @@
 - **自动分流**：图片类 → PP-OCRv6_medium；PDF → PaddleOCR-VL-1.6，无需手动选模型。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
+- **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
 - **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
@@ -61,6 +62,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 
 参数：
 - `--engine auto|ocr|vl`：`auto`（默认）按类型自动分流；`ocr` 强制 PP-OCRv6_medium；`vl` 强制 VL-1.6。
+- `--model <profile-id>`：指定具体模型 profile，例如 `ppocrv6-medium` 或 `paddleocr-vl-1.6`；不传则使用该 engine 的默认 profile。
 - `--out-dir`：输出目录，默认 `outputs`。
 - `--recursive`：输入为文件夹时递归子目录。
 
@@ -78,6 +80,9 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 
 # 通过 API 调一次 OCR；如果服务未启动，会自动拉起
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+
+# 指定具体模型 profile；适合未来新增/切换模型时做验收
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\probe_text.png" -Engine auto -Model ppocrv6-medium
 
 # VL / PDF / 公式等长任务可显式放宽客户端等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
@@ -103,6 +108,7 @@ HTTP 入口：
 
 说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=vl`
 会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
+新字段 `loaded_models` 返回 API 进程内已加载的具体 profile id。
 
 `/ocr/path` 请求示例：
 
@@ -110,6 +116,7 @@ HTTP 入口：
 {
   "path": "E:\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
   "engine": "ocr",
+  "model": "ppocrv6-medium",
   "recursive": false,
   "write_outputs": true
 }
@@ -119,6 +126,7 @@ HTTP 入口：
 `results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
 若外层等待超时或发现已有 VL 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
 或 `status=active_vl_task`，并给出 `recommendation=do_not_blindly_retry`。
+如果刚改过 `model_profiles.json` 或 adapter，先重启 LocalOCR API 再验收，避免常驻进程继续使用旧 registry。
 
 资源策略：教练/批量 OCR 时可以保持 API 常驻以复用 PP-OCR；切换到 Ollama、本地大模型
 或其他重 GPU 工作负载前，调用 `release_resources.ps1` 或使用 `ocr_once.ps1 -StopAfter`。
@@ -129,8 +137,10 @@ HTTP 入口：
 ```
 localocr/        源码
   cli.py         命令行入口
+  model_registry.py / model_profiles.json
+                 模型 profile 注册表；把模型选择与推理实现解耦
   router.py      自动分流
-  engines/       PP-OCRv6 与 VL 两个引擎
+  engines/       PP-OCRv6 与 VL adapter，实现统一 predict_image 输出协议
   outputs.py     TXT/MD/JSON 输出
   service.py     常驻服务层，缓存 OCR/VL 引擎
   server.py      FastAPI 本地 API
