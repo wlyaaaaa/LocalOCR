@@ -16,14 +16,17 @@ class ModelRegistryTest(unittest.TestCase):
 
         self.assertEqual(registry.defaults["ocr"], "ppocrv6-medium")
         self.assertEqual(registry.defaults["vl"], "paddleocr-vl-1.6")
+        self.assertEqual(registry.defaults["structure"], "pp-structure-v3")
         self.assertIn("plain_ocr", registry.profiles["ppocrv6-medium"].capabilities)
         self.assertIn("layout_vl", registry.profiles["paddleocr-vl-1.6"].capabilities)
+        self.assertIn("layout_structure", registry.profiles["pp-structure-v3"].capabilities)
 
     def test_engine_aliases_resolve_to_default_profile_ids(self) -> None:
         from localocr.model_registry import resolve_model_reference
 
         self.assertEqual(resolve_model_reference("ocr").id, "ppocrv6-medium")
         self.assertEqual(resolve_model_reference("vl").id, "paddleocr-vl-1.6")
+        self.assertEqual(resolve_model_reference("structure").id, "pp-structure-v3")
         self.assertEqual(resolve_model_reference("ppocrv6-medium").engine, "ocr")
 
     def test_model_choice_can_override_auto_route(self) -> None:
@@ -37,6 +40,18 @@ class ModelRegistryTest(unittest.TestCase):
 
         self.assertEqual(profile.id, "paddleocr-vl-1.6")
         self.assertEqual(profile.engine, "vl")
+
+    def test_structure_profile_can_be_selected_explicitly(self) -> None:
+        from localocr.model_registry import select_model_profile
+
+        profile = select_model_profile(
+            Path("tests/samples/sample_table.png"),
+            engine_choice="structure",
+            model_choice=None,
+        )
+
+        self.assertEqual(profile.id, "pp-structure-v3")
+        self.assertEqual(profile.engine, "structure")
 
     def test_conflicting_engine_and_model_choice_is_rejected(self) -> None:
         from localocr.model_registry import select_model_profile

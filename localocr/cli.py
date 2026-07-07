@@ -13,7 +13,7 @@ from .pdf_utils import render_pdf_to_files
 
 
 def _ocr_pdf_with_ocr_engine(pdf_path: Path, engine, tmp_dir: Path) -> dict:
-    """用 PP-OCRv6 处理 PDF：先把每页转图，再逐页 OCR。"""
+    """用逐页图片引擎处理 PDF：先把每页转图，再逐页 OCR/structure。"""
     images = render_pdf_to_files(pdf_path, out_dir=tmp_dir)
     pages = []
     for i, img in enumerate(images):
@@ -70,11 +70,11 @@ def process_one(path: Path, engine_choice: str, device: str, tmp_dir: Path,
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="localocr",
-        description="本地高质量中文 OCR：图片用 PP-OCRv6_medium，PDF/复杂文档用 PaddleOCR-VL-1.6，自动分流。",
+        description="本地高质量中文 OCR：图片用 PP-OCRv6_medium，PDF/复杂文档用 PaddleOCR-VL-1.6，结构化任务可显式使用 PP-StructureV3。",
     )
     parser.add_argument("inputs", nargs="+", help="图片 / PDF / 文件夹路径。")
-    parser.add_argument("--engine", choices=["auto", "ocr", "vl"], default="auto",
-                        help="auto=自动分流(默认)；ocr=强制PP-OCRv6_medium；vl=强制PaddleOCR-VL-1.6。")
+    parser.add_argument("--engine", choices=["auto", "ocr", "vl", "structure"], default="auto",
+                        help="auto=自动分流(默认)；ocr=强制PP-OCRv6_medium；vl=强制PaddleOCR-VL-1.6；structure=强制PP-StructureV3。")
     parser.add_argument("--model", default=None,
                         help="具体模型 profile id 或 ocr/vl 默认别名；指定后覆盖 auto 的默认 profile。")
     parser.add_argument("--out-dir", default="outputs", help="输出目录(默认 outputs)。")

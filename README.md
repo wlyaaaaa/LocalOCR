@@ -7,6 +7,7 @@
 
 - **中文优先**：默认 PP-OCRv6_medium 检测+识别，方向检测 / 文档矫正 / 文本行旋转纠正全开。
 - **复杂文档用 VL**：PDF、合同、论文、表格、公式、多栏排版默认走 **PaddleOCR-VL-1.6**。
+- **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
 - **自动分流**：图片类 → PP-OCRv6_medium；PDF → PaddleOCR-VL-1.6，无需手动选模型。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
@@ -40,7 +41,7 @@ wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/install_wsl.sh
 ```
 
 脚本会：创建 venv → 装 paddlepaddle-gpu cu129 → 装 paddleocr 3.7.0 → 预下载所有模型。
-约 10-20 分钟，取决于网速。完成后 `models/` 与 WSL 缓存里都有模型，后续完全离线。
+约 20-40 分钟，取决于网速和 PP-StructureV3 组件缓存状态。完成后 WSL 缓存里都有模型，后续完全离线。
 
 ### 2. 使用
 
@@ -61,8 +62,8 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 ```
 
 参数：
-- `--engine auto|ocr|vl`：`auto`（默认）按类型自动分流；`ocr` 强制 PP-OCRv6_medium；`vl` 强制 VL-1.6。
-- `--model <profile-id>`：指定具体模型 profile，例如 `ppocrv6-medium` 或 `paddleocr-vl-1.6`；不传则使用该 engine 的默认 profile。
+- `--engine auto|ocr|vl|structure`：`auto`（默认）按类型自动分流；`ocr` 强制 PP-OCRv6_medium；`vl` 强制 VL-1.6；`structure` 强制 PP-StructureV3。
+- `--model <profile-id>`：指定具体模型 profile，例如 `ppocrv6-medium`、`paddleocr-vl-1.6` 或 `pp-structure-v3`；不传则使用该 engine 的默认 profile。
 - `--out-dir`：输出目录，默认 `outputs`。
 - `--recursive`：输入为文件夹时递归子目录。
 
@@ -87,6 +88,9 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # VL / PDF / 公式等长任务可显式放宽客户端等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 
+# 表格/版面块/公式/印章等需要结构化坐标和块类型时，用 PP-StructureV3
+.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
+
 # 首次冷启动服务较慢时，可单独放宽服务启动等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
 
@@ -106,7 +110,7 @@ HTTP 入口：
 - `POST http://127.0.0.1:8765/ocr/path`
 - `POST http://127.0.0.1:8765/ocr/file`
 
-说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=vl`
+说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=vl` / `engine=structure`
 会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
 新字段 `loaded_models` 返回 API 进程内已加载的具体 profile id。
 
@@ -124,8 +128,8 @@ HTTP 入口：
 
 `ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
 `results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
-若外层等待超时或发现已有 VL 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
-或 `status=active_vl_task`，并给出 `recommendation=do_not_blindly_retry`。
+若外层等待超时或发现已有重 OCR 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
+或 `status=active_localocr_task`，并给出 `recommendation=do_not_blindly_retry`。
 如果刚改过 `model_profiles.json` 或 adapter，先重启 LocalOCR API 再验收，避免常驻进程继续使用旧 registry。
 
 资源策略：教练/批量 OCR 时可以保持 API 常驻以复用 PP-OCR；切换到 Ollama、本地大模型
@@ -140,9 +144,9 @@ localocr/        源码
   model_registry.py / model_profiles.json
                  模型 profile 注册表；把模型选择与推理实现解耦
   router.py      自动分流
-  engines/       PP-OCRv6 与 VL adapter，实现统一 predict_image 输出协议
+  engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
   outputs.py     TXT/MD/JSON 输出
-  service.py     常驻服务层，缓存 OCR/VL 引擎
+  service.py     常驻服务层，缓存轻量 OCR，引擎重任务走隔离子进程
   server.py      FastAPI 本地 API
   gpu_probe.py   GPU 强制探针
 scripts/         安装/下载/WSL 运行脚本

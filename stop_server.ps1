@@ -73,9 +73,10 @@ function Send-WslSignal {
 
 Write-Host "[LocalOCR] Stopping API server on port $Port ..." -ForegroundColor Cyan
 
-# Clean up API-spawned localocr.cli VL subprocesses before stopping the API server.
+# Clean up API-spawned heavy localocr.cli subprocesses before stopping the API server.
 $patterns = @(
     "^/root/localocr-venv/bin/python -m [l]ocalocr.cli .*_pdf_pages/api/vl_subprocess",
+    "^/root/localocr-venv/bin/python -m [l]ocalocr.cli .*_pdf_pages/api/structure_subprocess",
     "^/root/localocr-venv/bin/python -m [l]ocalocr.server"
 )
 

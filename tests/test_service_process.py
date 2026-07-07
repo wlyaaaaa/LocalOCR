@@ -13,6 +13,16 @@ from localocr.service import run_isolated_command
 
 
 class IsolatedProcessTest(unittest.TestCase):
+    def test_service_treats_structure_as_isolated_heavy_engine(self) -> None:
+        service_source = (Path(__file__).resolve().parent.parent / "localocr" / "service.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("HEAVY_ISOLATED_ENGINES", service_source)
+        self.assertIn('"vl"', service_source)
+        self.assertIn('"structure"', service_source)
+        self.assertIn("profile.engine in HEAVY_ISOLATED_ENGINES", service_source)
+
     def test_timeout_kills_child_process_group(self) -> None:
         if os.name != "posix":
             self.skipTest("process-group cleanup is verified in WSL/Linux")

@@ -1,7 +1,8 @@
 {
   "defaults": {
     "ocr": "ppocrv6-medium",
-    "vl": "paddleocr-vl-1.6"
+    "vl": "paddleocr-vl-1.6",
+    "structure": "pp-structure-v3"
   },
   "profiles": [
     {
@@ -50,6 +51,38 @@
         "vl_rec_backend": "native",
         "use_doc_orientation_classify": true,
         "use_doc_unwarping": true
+      }
+    },
+    {
+      "id": "pp-structure-v3",
+      "engine": "structure",
+      "adapter": "localocr.engines.structure:StructureV3Engine",
+      "display_name": "PP-StructureV3 + PP-OCRv5",
+      "result_engine_name": "PP-StructureV3",
+      "backend": "paddleocr.PPStructureV3",
+      "pipeline_version": "PP-StructureV3",
+      "capabilities": [
+        "layout_structure",
+        "table",
+        "formula",
+        "seal",
+        "region_detection",
+        "document_orientation",
+        "document_unwarping",
+        "textline_orientation"
+      ],
+      "options": {
+        "lang": "ch",
+        "ocr_version": "PP-OCRv5",
+        "use_doc_orientation_classify": true,
+        "use_doc_unwarping": true,
+        "use_textline_orientation": true,
+        "use_table_recognition": true,
+        "use_formula_recognition": true,
+        "use_chart_recognition": false,
+        "use_seal_recognition": true,
+        "use_region_detection": true,
+        "format_block_content": true
       }
     }
   ]

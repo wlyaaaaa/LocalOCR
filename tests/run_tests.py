@@ -33,6 +33,7 @@ CASES = [
     ("中文截图", "sample_chat_screenshot.png", "ocr"),
     ("扫描PDF", "sample_scan.pdf", "vl"),
     ("表格", "sample_table.png", "vl"),
+    ("结构化表格", "sample_table.png", "structure"),
     ("公式文档", "sample_formula.png", "vl"),
 ]
 

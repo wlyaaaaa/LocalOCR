@@ -85,9 +85,13 @@ def _to_json(result: dict, file_path: Path) -> str:
         "file": str(file_path),
         "file_name": file_path.name,
         "engine": result.get("engine"),
+        "engine_key": result.get("engine_key"),
         "model": result.get("model"),
+        "model_id": result.get("model_id"),
         "device": result.get("device"),
         "page_angle": result.get("page_angle"),
+        "page_width": result.get("page_width"),
+        "page_height": result.get("page_height"),
         "pages": result.get("pages", []),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

@@ -36,6 +36,7 @@ class WindowsWrapperTest(unittest.TestCase):
 
         self.assertIn("localocr.cli", script)
         self.assertIn("_pdf_pages/api/vl_subprocess", script)
+        self.assertIn("_pdf_pages/api/structure_subprocess", script)
         self.assertIn("wsl-server.pid", script)
         self.assertIn("Remove-Item", script)
         self.assertIn("$WslTimeoutSec", script)
@@ -87,12 +88,13 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("Get-LocalOcrActiveTasks", script)
         self.assertIn("[l]ocalocr[.]cli", script)
         self.assertIn("[v]l_subprocess", script)
-        self.assertIn("active_vl_task", script)
+        self.assertIn("[s]tructure_subprocess", script)
+        self.assertIn("active_localocr_task", script)
 
     def test_ocr_smart_active_task_probe_avoids_matching_itself(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("[l]ocalocr[.]cli|[v]l_subprocess", script)
+        self.assertIn("[l]ocalocr[.]cli|[v]l_subprocess|[s]tructure_subprocess", script)
 
     def test_api_wrappers_accept_model_profile_override(self) -> None:
         once = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
@@ -103,6 +105,13 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("[string]$Model", smart)
         self.assertIn("-Model", smart)
         self.assertIn("requested_model", smart)
+
+    def test_api_wrappers_accept_structure_engine(self) -> None:
+        once = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
+        smart = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('[ValidateSet("auto", "ocr", "vl", "structure")]', once)
+        self.assertIn('[ValidateSet("auto", "ocr", "vl", "structure")]', smart)
 
 
 if __name__ == "__main__":

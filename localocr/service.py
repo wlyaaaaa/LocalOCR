@@ -17,6 +17,9 @@ from .pdf_utils import render_pdf_to_files
 from .router import collect_files, is_pdf
 
 
+HEAVY_ISOLATED_ENGINES = {"vl", "structure"}
+
+
 def run_isolated_command(
     cmd: list[str],
     *,
@@ -121,10 +124,10 @@ class OCRService:
     def _project_path(self, path: Path) -> Path:
         return path if path.is_absolute() else self.project_root / path
 
-    def _process_vl_isolated(self, path: Path, output_dir: Path, profile: ModelProfile) -> dict[str, Any]:
-        """Run PaddleOCR-VL in a child process to keep the API worker stable."""
+    def _process_heavy_isolated(self, path: Path, output_dir: Path, profile: ModelProfile) -> dict[str, Any]:
+        """Run heavy document engines in a child process to keep the API worker stable."""
         output_dir.mkdir(parents=True, exist_ok=True)
-        tmp_dir = self.tmp_dir / "vl_subprocess"
+        tmp_dir = self.tmp_dir / f"{profile.engine}_subprocess"
         cmd = [
             sys.executable,
             "-m",
@@ -148,14 +151,14 @@ class OCRService:
             stdout_tail = completed.stdout[-2000:]
             stderr_tail = completed.stderr[-2000:]
             raise RuntimeError(
-                "VL isolated subprocess failed "
+                f"{profile.engine} isolated subprocess failed "
                 f"(exit={completed.returncode}). stdout_tail={stdout_tail!r} stderr_tail={stderr_tail!r}"
             )
 
         json_path = self._project_path(output_dir) / f"{safe_output_stem(path)}.json"
         if not json_path.exists():
             raise RuntimeError(
-                f"VL isolated subprocess finished but did not create JSON output: {json_path}"
+                f"{profile.engine} isolated subprocess finished but did not create JSON output: {json_path}"
             )
         result = json.loads(json_path.read_text(encoding="utf-8"))
         result["source_file"] = str(path)
@@ -215,14 +218,14 @@ class OCRService:
         with self._lock:
             for file_path in files:
                 profile = select_model_profile(file_path, engine_choice=engine_choice, model_choice=model_choice)
-                if profile.engine == "vl":
+                if profile.engine in HEAVY_ISOLATED_ENGINES:
                     if write_files:
-                        result = self._process_vl_isolated(file_path, output_dir, profile)
+                        result = self._process_heavy_isolated(file_path, output_dir, profile)
                     else:
                         runtime_dir = self.project_root / "_server"
                         runtime_dir.mkdir(parents=True, exist_ok=True)
-                        with tempfile.TemporaryDirectory(prefix="localocr-vl-", dir=runtime_dir) as tmp:
-                            result = self._process_vl_isolated(file_path, Path(tmp), profile)
+                        with tempfile.TemporaryDirectory(prefix=f"localocr-{profile.engine}-", dir=runtime_dir) as tmp:
+                            result = self._process_heavy_isolated(file_path, Path(tmp), profile)
                 else:
                     result = self.process_file(file_path, engine_choice, model_choice)
                 if write_files and "output_files" not in result:

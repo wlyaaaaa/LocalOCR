@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["PPOCRv6Engine", "VLEngine", "get_engine"]
+__all__ = ["PPOCRv6Engine", "VLEngine", "StructureV3Engine", "get_engine"]
 
 
 def __getattr__(name: str) -> Any:
@@ -14,6 +14,10 @@ def __getattr__(name: str) -> Any:
         from .vl import VLEngine
 
         return VLEngine
+    if name == "StructureV3Engine":
+        from .structure import StructureV3Engine
+
+        return StructureV3Engine
     raise AttributeError(name)
 
 

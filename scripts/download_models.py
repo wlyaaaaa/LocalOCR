@@ -22,9 +22,10 @@ from localocr.gpu_probe import probe_gpu, format_probe
 
 print("[GPU]", format_probe(probe_gpu()))
 
-from paddleocr import PaddleOCR, PaddleOCRVL
+from paddleocr import PaddleOCR, PaddleOCRVL, PPStructureV3
 
 PROBE = str(Path(__file__).resolve().parent.parent / "tests" / "samples" / "probe_text.png")
+STRUCTURE_PROBE = str(Path(__file__).resolve().parent.parent / "tests" / "samples" / "sample_table.png")
 if not Path(PROBE).exists():
     Path(PROBE).parent.mkdir(parents=True, exist_ok=True)
     import io, cv2, numpy as np
@@ -33,7 +34,7 @@ if not Path(PROBE).exists():
     ok, arr = cv2.imencode(".png", img)
     Path(PROBE).write_bytes(arr.tobytes())
 
-print("\n==== [1/2] 预热 PP-OCRv6_medium（检测+识别+方向+矫正） ====")
+print("\n==== [1/3] 预热 PP-OCRv6_medium（检测+识别+方向+矫正） ====")
 ocr = PaddleOCR(
     ocr_version="PP-OCRv6",
     lang="ch",
@@ -45,7 +46,7 @@ ocr = PaddleOCR(
 r = ocr.predict(PROBE)
 print("PP-OCRv6_medium OK:", r[0].json["res"].get("rec_texts"))
 
-print("\n==== [2/2] 预热 PaddleOCR-VL-1.6 ====")
+print("\n==== [2/3] 预热 PaddleOCR-VL-1.6 ====")
 vl = PaddleOCRVL(
     pipeline_version="v1.6",
     vl_rec_backend="native",
@@ -56,6 +57,25 @@ vl = PaddleOCRVL(
 r = vl.predict(PROBE)
 blocks = r[0].json["res"].get("parsing_res_list", [])
 print("PaddleOCR-VL-1.6 OK:", [b.get("block_content") for b in blocks][:3])
+
+print("\n==== [3/3] 预热 PP-StructureV3 + PP-OCRv5 ====")
+structure = PPStructureV3(
+    lang="ch",
+    ocr_version="PP-OCRv5",
+    use_doc_orientation_classify=True,
+    use_doc_unwarping=True,
+    use_textline_orientation=True,
+    use_table_recognition=True,
+    use_formula_recognition=True,
+    use_chart_recognition=False,
+    use_seal_recognition=True,
+    use_region_detection=True,
+    format_block_content=True,
+    device="gpu:0",
+)
+r = structure.predict(STRUCTURE_PROBE if Path(STRUCTURE_PROBE).exists() else PROBE)
+blocks = r[0].json["res"].get("parsing_res_list", [])
+print("PP-StructureV3 OK:", [b.get("block_label") for b in blocks][:5])
 
 cache = Path.home() / ".paddlex" / "official_models"
 print(f"\n==== 完成 ====")

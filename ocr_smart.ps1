@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Path,
 
-    [ValidateSet("auto", "ocr", "vl")]
+    [ValidateSet("auto", "ocr", "vl", "structure")]
     [string]$Engine = "auto",
     [string]$Model,
 
@@ -132,7 +132,7 @@ function Invoke-WslBashBounded {
 }
 
 function Get-LocalOcrActiveTasks {
-    $probe = Invoke-WslBashBounded -Command "timeout 8s pgrep -af '[l]ocalocr[.]cli|[v]l_subprocess' || true" -TimeoutSec 10
+    $probe = Invoke-WslBashBounded -Command "timeout 8s pgrep -af '[l]ocalocr[.]cli|[v]l_subprocess|[s]tructure_subprocess' || true" -TimeoutSec 10
     if ($probe.timed_out) {
         return [pscustomobject]@{
             timed_out = $true
@@ -205,7 +205,7 @@ if ($TriageOnly) {
 if ((@($active.tasks).Count -gt 0) -and (-not $Force)) {
     ConvertTo-CompactJson ([pscustomobject]@{
         ok = $false
-        status = "active_vl_task"
+        status = "active_localocr_task"
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
         requested_model = $Model

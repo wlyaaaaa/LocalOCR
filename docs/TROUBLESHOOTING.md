@@ -114,14 +114,14 @@ E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 常见短状态：
 
 - `triage_only`：只预检，没有提交 OCR。
-- `active_vl_task`：后台已有 VL / PDF 子任务，先不要重复提交。
+- `active_localocr_task`：后台已有 VL / Structure / PDF 子任务，先不要重复提交。
 - `client_timeout`：外层等待超时，已停止客户端等待；先看返回的 `active_tasks` 和输出目录。
 - `client_failed`：底层调用失败，看 `stderr_tail` 和 `/health`。
 
 不要立刻重复提交同一份 PDF。先检查：
 
 ```powershell
-wsl -d Ubuntu -e bash -lc "pgrep -af 'localocr.cli|vl_subprocess|python.*localocr'"
+wsl -d Ubuntu -e bash -lc "pgrep -af 'localocr.cli|vl_subprocess|structure_subprocess|python.*localocr'"
 Invoke-RestMethod http://127.0.0.1:8765/health
 Get-ChildItem E:\LocalOCR\outputs\api | Sort-Object LastWriteTime -Descending | Select-Object -First 10
 ```
@@ -149,3 +149,16 @@ E:\LocalOCR\release_resources.ps1
 ```powershell
 E:\LocalOCR\ocr_once.ps1 "E:\path\image.png" -StopAfter
 ```
+
+## 12. PP-StructureV3 报 Invalid OCR version
+
+**现象**：把结构化管线配置成 `ocr_version="PP-OCRv6"` 时，报：
+
+```text
+ValueError: Invalid OCR version: PP-OCRv6. Supported values are ['PP-OCRv3', 'PP-OCRv4', 'PP-OCRv5'].
+```
+
+**原因**：当前 PaddleOCR 3.7.0 的 `PPStructureV3` 只支持 `PP-OCRv3/v4/v5`。
+
+**解决**：LocalOCR 的 `pp-structure-v3` profile 固定使用 `PP-OCRv5`。普通图片 OCR 仍用 `PP-OCRv6_medium`；
+不要为了统一版本把结构化 profile 改成 `PP-OCRv6`。

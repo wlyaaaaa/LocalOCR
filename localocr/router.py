@@ -20,13 +20,13 @@ def is_supported(path: Path) -> bool:
 
 
 def route_engine(path: Path, override: str = "auto") -> str:
-    """返回 'ocr'（PP-OCRv6_medium）或 'vl'（PaddleOCR-VL-1.6）。
+    """返回 engine 族：ocr、vl 或 structure。
 
     - auto：图片→ocr；PDF→vl（见设计文档 §4 路由规则）。
-    - ocr/vl：强制覆盖。
+    - ocr/vl/structure：强制覆盖。
     """
-    if override not in ("auto", "ocr", "vl"):
-        raise ValueError(f"engine 必须是 auto/ocr/vl，得到 {override!r}")
+    if override not in ("auto", "ocr", "vl", "structure"):
+        raise ValueError(f"engine 必须是 auto/ocr/vl/structure，得到 {override!r}")
     if override != "auto":
         return override
     if is_pdf(path):

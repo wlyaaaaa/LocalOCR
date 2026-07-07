@@ -1,17 +1,17 @@
 # LocalOCR 测试报告
-日期：2026-07-01 17:39
+日期：2026-07-06 21:38
 
 ## GPU 环境
 
-- GPU: NVIDIA GeForce RTX 5080 | capability=sm_120 | count=1 | place=gpu:0 | op_ok=True
-- 推理前显存：5117 MiB
+- GPU: NVIDIA GeForce RTX 5090 D | capability=sm_120 | count=1 | place=gpu:0 | op_ok=True
+- 推理前显存：4862 MiB
 
 ## 中文截图
 - 文件：`sample_chat_screenshot.png`
 - 引擎：`ocr`
 - 模型：`PP-OCRv6_medium (det + rec)`
-- 耗时：2.47s
-- 显存：5117 MiB → 5738 MiB
+- 耗时：5.24s
+- 显存：4862 MiB → 5512 MiB
 - 页数：1，块数：9
 - 输出：`sample_chat_screenshot.md` / `sample_chat_screenshot.json`
 - 方向角度：0
@@ -33,8 +33,8 @@
 - 文件：`sample_scan.pdf`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：11.87s
-- 显存：5739 MiB → 14710 MiB
+- 耗时：13.12s
+- 显存：5512 MiB → 14224 MiB
 - 页数：2，块数：17
 - 输出：`sample_scan.md` / `sample_scan.json`
 - 方向角度：None
@@ -58,8 +58,8 @@
 - 文件：`sample_table.png`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：6.41s
-- 显存：14710 MiB → 15295 MiB
+- 耗时：5.90s
+- 显存：14224 MiB → 16015 MiB
 - 页数：1，块数：3
 - 输出：`sample_table.md` / `sample_table.json`
 - 方向角度：0
@@ -72,12 +72,30 @@
 合计金额：112,500.00元
 ```
 
+## 结构化表格
+- 文件：`sample_table.png`
+- 引擎：`structure`
+- 模型：`PP-StructureV3 + PP-OCRv5`
+- 耗时：16.52s
+- 显存：16015 MiB → 7441 MiB
+- 页数：1，块数：3
+- 输出：`sample_table.md` / `sample_table.json`
+- 方向角度：0
+
+### 识别文本片段
+
+```
+采购订单明细表P0-2026-0712
+<div style="text-align: center;"><html><body><table border="1"><tbody><tr><td>序号</td><td>商品名称</td><td>规格型号</td><td>数量</td><td>单价(元)</td><td>金额(元)</td></tr><tr><td>1</td><td>工业级路由器</td><td>RJ-4500</td><td>20</td><td>1,280.00</td><td>25,600.00</td></tr><tr><td>2</td><td>光纤收发器</td><td>GF-1000S</td><td>50</td><td>320.00</td><td>16,000.00</td></tr><tr><td>3</td><td>网络交换机</td><td>SW-2400</td><td>8</td><td>4,500.00</td><td>36,000.00</td></tr><tr><td>4</td><td>服务器机柜</td><td>CAB-42U</td><td>3</td><td>6,800.00</td><td>20,400.00</td></tr><tr><td>5</td><td>不间断电源</td><td>UPS-3000</td><td>5</td><td>2,900.00</td><td>14,500.00</td></tr></tbody></table></body></html></div>
+合计金额：112,500.00元
+```
+
 ## 公式文档
 - 文件：`sample_formula.png`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：126.49s
-- 显存：15295 MiB → 15846 MiB
+- 耗时：6.24s
+- 显存：7441 MiB → 15270 MiB
 - 页数：1，块数：13
 - 输出：`sample_formula.md` / `sample_formula.json`
 - 方向角度：0
@@ -87,7 +105,7 @@
 ```
 机器学习常用损失函数
 一、均方误差（MSE）用于回归任务：
-$$ \mathsf{MSE}=(\mathbf{1/n})^{*}\Sigma(\mathbf{yi}-\mathbf{i})^{2} $$
+$$ \mathsf{MSE}=(\mathbf{1/n})^{*}\Sigma(\mathsf{yi-ii})^{2} $$
 其中 yi 为真实值，⊠i 为预测值，n 为样本数。
 二、交叉熵损失用于分类任务：
 $$ {\mathsf{L}}=-\Sigma{\mathrm{~c i~}}^{*}\log(p i) $$
@@ -99,9 +117,10 @@ $$ {\mathsf{L}}=-\Sigma{\mathrm{~c i~}}^{*}\log(p i) $$
 
 | 样本 | 结果 | 耗时 |
 |---|---|---|
-| 中文截图 | ✓ | 2.5s |
-| 扫描PDF | ✓ | 11.9s |
-| 表格 | ✓ | 6.4s |
-| 公式文档 | ✓ | 126.5s |
+| 中文截图 | ✓ | 5.2s |
+| 扫描PDF | ✓ | 13.1s |
+| 表格 | ✓ | 5.9s |
+| 结构化表格 | ✓ | 16.5s |
+| 公式文档 | ✓ | 6.2s |
 
-推理后显存：15846 MiB
+推理后显存：15267 MiB

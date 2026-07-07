@@ -18,7 +18,8 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
                                     │   ├─ server.py           │
                                     │   ├─ engines/            │
                                     │   │   ├─ ppocrv6.py      │
-                                    │   │   └─ vl.py           │
+                                    │   │   ├─ vl.py           │
+                                    │   │   └─ structure.py    │
                                     │   ├─ pdf_utils.py        │
                                     │   └─ outputs.py          │
                                     │        ↓                 │
@@ -39,12 +40,13 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 |---|---|
 | `gpu_probe.py` | 启动时强制验证 GPU 可用（sm_120+、算子执行），失败即退出，不回退 CPU |
 | `model_profiles.json` | 声明 profile id、默认模型、engine 族、adapter、能力标签和 Paddle 初始化参数 |
-| `model_registry.py` | 读取 profile，解析 `ocr/vl` 默认别名，按 `--model` 创建具体 adapter |
-| `router.py` | 按扩展名分流：图片→ocr，PDF→vl；`--engine` 可覆盖；不直接绑定具体模型 |
-| `service.py` | 常驻 OCR 运行时，按具体 profile 缓存模型；VL/PDF 使用隔离子进程并串行化推理调用 |
+| `model_registry.py` | 读取 profile，解析 `ocr/vl/structure` 默认别名，按 `--model` 创建具体 adapter |
+| `router.py` | 按扩展名分流：图片→ocr，PDF→vl；`--engine` 可覆盖到 `structure`；不直接绑定具体模型 |
+| `service.py` | 常驻 OCR 运行时，按具体 profile 缓存轻量模型；VL/Structure 重模型使用隔离子进程并串行化推理调用 |
 | `server.py` | FastAPI 本地 API，提供 `/health`、`/ocr/path`、`/ocr/file`，请求体支持 `model` |
 | `engines/ppocrv6.py` | PP-OCRv6 adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
 | `engines/vl.py` | PaddleOCR-VL adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
+| `engines/structure.py` | PP-StructureV3 adapter，接收 profile 注入的结构化管线参数并归一成统一 blocks 输出 |
 | `pdf_utils.py` | PDF→PNG（pypdfium2），供逐页送引擎 |
 | `outputs.py` | 统一产出 TXT/Markdown/JSON，保留坐标/置信度/表格/阅读顺序 |
 | `cli.py` | argparse 入口，编排探针→收集→路由→识别→输出 |
@@ -66,7 +68,7 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 `start_server.ps1` 通过 Windows `Start-Process` 启动隐藏的 `wsl.exe` 会话，并在
 其中以前台进程运行 `python -m localocr.server`，默认只监听 `127.0.0.1:8765`。
 服务启动时执行 GPU 探针；PP-OCR 图片请求在 API 进程内加载并复用模型实例。
-PaddleOCR-VL/PDF/复杂版面请求通过隔离子进程执行，避免 VL 超大模型与 Uvicorn
+PaddleOCR-VL 和 PP-StructureV3 请求通过隔离子进程执行，避免重模型与 Uvicorn
 生命周期、信号处理或显存释放互相影响。Windows 侧启动进程 PID 记录在
 `_server/wsl-server.pid`，`stop_server.ps1` 停止 WSL 内服务后会清理该文件。
 `loaded_engines` 保留兼容字段，返回已缓存 profile 的 engine 族；`loaded_models`

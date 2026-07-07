@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Path,
 
-    [ValidateSet("auto", "ocr", "vl")]
+    [ValidateSet("auto", "ocr", "vl", "structure")]
     [string]$Engine = "auto",
     [string]$Model,
 

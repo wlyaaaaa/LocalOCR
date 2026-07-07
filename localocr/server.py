@@ -15,7 +15,7 @@ from .service import OCRService
 
 class OCRPathRequest(BaseModel):
     path: str = Field(..., description="Windows or WSL path to image/PDF/folder")
-    engine: Literal["auto", "ocr", "vl"] = "auto"
+    engine: Literal["auto", "ocr", "vl", "structure"] = "auto"
     model: str | None = Field(None, description="Concrete model profile id; optional")
     recursive: bool = False
     out_dir: str | None = None
@@ -23,15 +23,15 @@ class OCRPathRequest(BaseModel):
 
 
 class OCRUploadOptions(BaseModel):
-    engine: Literal["auto", "ocr", "vl"] = "auto"
+    engine: Literal["auto", "ocr", "vl", "structure"] = "auto"
     model: str | None = None
     write_outputs: bool = True
 
 
 app = FastAPI(
     title="LocalOCR API",
-    version="0.2.0",
-    description="Local-only OCR API for PP-OCRv6_medium and PaddleOCR-VL-1.6.",
+    version="0.3.0",
+    description="Local-only OCR API for PP-OCRv6_medium, PaddleOCR-VL-1.6, and PP-StructureV3.",
 )
 
 _service: OCRService | None = None
@@ -76,7 +76,7 @@ def ocr_path(req: OCRPathRequest) -> dict:
 @app.post("/ocr/file")
 async def ocr_file(
     file: UploadFile = File(...),
-    engine: Literal["auto", "ocr", "vl"] = "auto",
+    engine: Literal["auto", "ocr", "vl", "structure"] = "auto",
     model: str | None = None,
     write_outputs: bool = True,
 ) -> dict:

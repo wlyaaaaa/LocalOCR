@@ -9,7 +9,7 @@ from typing import Any
 
 from .router import route_engine
 
-VALID_ENGINE_KEYS = {"ocr", "vl"}
+VALID_ENGINE_KEYS = {"ocr", "vl", "structure"}
 DEFAULT_PROFILE_PATH = Path(__file__).with_name("model_profiles.json")
 
 
