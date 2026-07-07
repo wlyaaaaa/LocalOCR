@@ -1,17 +1,17 @@
 # LocalOCR 测试报告
-日期：2026-07-06 21:38
+日期：2026-07-06 22:25
 
 ## GPU 环境
 
 - GPU: NVIDIA GeForce RTX 5090 D | capability=sm_120 | count=1 | place=gpu:0 | op_ok=True
-- 推理前显存：4862 MiB
+- 推理前显存：4942 MiB
 
 ## 中文截图
 - 文件：`sample_chat_screenshot.png`
 - 引擎：`ocr`
 - 模型：`PP-OCRv6_medium (det + rec)`
-- 耗时：5.24s
-- 显存：4862 MiB → 5512 MiB
+- 耗时：5.00s
+- 显存：4942 MiB → 5570 MiB
 - 页数：1，块数：9
 - 输出：`sample_chat_screenshot.md` / `sample_chat_screenshot.json`
 - 方向角度：0
@@ -33,8 +33,8 @@
 - 文件：`sample_scan.pdf`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：13.12s
-- 显存：5512 MiB → 14224 MiB
+- 耗时：11.88s
+- 显存：5570 MiB → 14311 MiB
 - 页数：2，块数：17
 - 输出：`sample_scan.md` / `sample_scan.json`
 - 方向角度：None
@@ -58,8 +58,8 @@
 - 文件：`sample_table.png`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：5.90s
-- 显存：14224 MiB → 16015 MiB
+- 耗时：6.05s
+- 显存：14311 MiB → 16180 MiB
 - 页数：1，块数：3
 - 输出：`sample_table.md` / `sample_table.json`
 - 方向角度：0
@@ -76,8 +76,8 @@
 - 文件：`sample_table.png`
 - 引擎：`structure`
 - 模型：`PP-StructureV3 + PP-OCRv5`
-- 耗时：16.52s
-- 显存：16015 MiB → 7441 MiB
+- 耗时：16.39s
+- 显存：16180 MiB → 7545 MiB
 - 页数：1，块数：3
 - 输出：`sample_table.md` / `sample_table.json`
 - 方向角度：0
@@ -94,8 +94,8 @@
 - 文件：`sample_formula.png`
 - 引擎：`vl`
 - 模型：`PaddleOCR-VL-1.6`
-- 耗时：6.24s
-- 显存：7441 MiB → 15270 MiB
+- 耗时：6.39s
+- 显存：7545 MiB → 15279 MiB
 - 页数：1，块数：13
 - 输出：`sample_formula.md` / `sample_formula.json`
 - 方向角度：0
@@ -117,10 +117,10 @@ $$ {\mathsf{L}}=-\Sigma{\mathrm{~c i~}}^{*}\log(p i) $$
 
 | 样本 | 结果 | 耗时 |
 |---|---|---|
-| 中文截图 | ✓ | 5.2s |
-| 扫描PDF | ✓ | 13.1s |
-| 表格 | ✓ | 5.9s |
-| 结构化表格 | ✓ | 16.5s |
-| 公式文档 | ✓ | 6.2s |
+| 中文截图 | ✓ | 5.0s |
+| 扫描PDF | ✓ | 11.9s |
+| 表格 | ✓ | 6.1s |
+| 结构化表格 | ✓ | 16.4s |
+| 公式文档 | ✓ | 6.4s |
 
-推理后显存：15267 MiB
+推理后显存：15279 MiB

@@ -30,7 +30,7 @@ class OCRUploadOptions(BaseModel):
 
 app = FastAPI(
     title="LocalOCR API",
-    version="0.3.0",
+    version="0.4.0",
     description="Local-only OCR API for PP-OCRv6_medium, PaddleOCR-VL-1.6, and PP-StructureV3.",
 )
 
@@ -53,6 +53,11 @@ def health() -> dict:
         "loaded_engines": service.loaded_engines,
         "loaded_models": service.loaded_models,
     }
+
+
+@app.get("/jobs/{job_key}")
+def job_status(job_key: str) -> dict:
+    return get_service().job_registry.read_status(job_key)
 
 
 @app.post("/ocr/path")

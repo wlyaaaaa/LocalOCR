@@ -15,6 +15,7 @@
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
 - **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
+- **任务级缓存/去重**：API 会按源文件、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
 - **Codex 防卡入口**：`ocr_smart.ps1` 先做轻量分流和后台任务探测，再用外层超时包住 `ocr_once.ps1`，避免 PowerShell 长时间占住 AI 回合。
 
 ## 环境
@@ -91,6 +92,9 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # 表格/版面块/公式/印章等需要结构化坐标和块类型时，用 PP-StructureV3
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
 
+# 查询某个 job_key 的状态或缓存可用性
+Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
+
 # 首次冷启动服务较慢时，可单独放宽服务启动等待时间
 .\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
 
@@ -107,6 +111,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 HTTP 入口：
 
 - `GET http://127.0.0.1:8765/health`
+- `GET http://127.0.0.1:8765/jobs/<job_key>`
 - `POST http://127.0.0.1:8765/ocr/path`
 - `POST http://127.0.0.1:8765/ocr/file`
 
@@ -127,7 +132,10 @@ HTTP 入口：
 ```
 
 `ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
-`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。
+`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。API 还会给每个写盘任务返回
+`job_key` / `job_id` / `cache_status`；同一源文件、模型 profile 和输出目录再次提交时，若输出文件仍存在，会直接返回
+`cache_status=cache_hit`。若任务正在运行，API 返回 `status=active_localocr_task` 和 `recommendation=do_not_blindly_retry`，
+不要盲目重复提交；可用 `GET /jobs/<job_key>` 查询状态。
 若外层等待超时或发现已有重 OCR 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
 或 `status=active_localocr_task`，并给出 `recommendation=do_not_blindly_retry`。
 如果刚改过 `model_profiles.json` 或 adapter，先重启 LocalOCR API 再验收，避免常驻进程继续使用旧 registry。
@@ -145,9 +153,10 @@ localocr/        源码
                  模型 profile 注册表；把模型选择与推理实现解耦
   router.py      自动分流
   engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
+  job_registry.py 文件型任务缓存、去重和 job 状态 manifest
   outputs.py     TXT/MD/JSON 输出
-  service.py     常驻服务层，缓存轻量 OCR，引擎重任务走隔离子进程
-  server.py      FastAPI 本地 API
+  service.py     常驻服务层，缓存轻量 OCR，引擎重任务走隔离子进程，并接入任务级缓存
+  server.py      FastAPI 本地 API，提供 health/job/OCR 端点
   gpu_probe.py   GPU 强制探针
 scripts/         安装/下载/WSL 运行脚本
 tests/           合成样本与测试脚本，见 TEST_REPORT.md

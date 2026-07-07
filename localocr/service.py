@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .gpu_probe import format_probe, probe_gpu
+from .job_registry import JobClaim, JobRegistry
 from .model_registry import ModelProfile, get_engine, select_model_profile
 from .outputs import safe_output_stem, write_outputs
 from .pdf_utils import render_pdf_to_files
@@ -88,6 +89,7 @@ class OCRService:
         *,
         device: str = "gpu:0",
         tmp_dir: str | Path = "_pdf_pages/api",
+        job_dir: str | Path | None = None,
         probe_on_start: bool = True,
         isolated_timeout_sec: int = 3600,
     ) -> None:
@@ -96,6 +98,7 @@ class OCRService:
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.isolated_timeout_sec = isolated_timeout_sec
+        self.job_registry = JobRegistry(job_dir if job_dir is not None else self.project_root / "_server" / "jobs")
         self._engine_cache: dict[str, Any] = {}
         self._engine_profiles: dict[str, ModelProfile] = {}
         self._lock = threading.RLock()
@@ -215,30 +218,63 @@ class OCRService:
 
         output_dir = Path(out_dir) if out_dir is not None else Path("outputs/api")
         results: list[dict[str, Any]] = []
-        with self._lock:
-            for file_path in files:
-                profile = select_model_profile(file_path, engine_choice=engine_choice, model_choice=model_choice)
-                if profile.engine in HEAVY_ISOLATED_ENGINES:
-                    if write_files:
-                        result = self._process_heavy_isolated(file_path, output_dir, profile)
+        for file_path in files:
+            profile = select_model_profile(file_path, engine_choice=engine_choice, model_choice=model_choice)
+            claim: JobClaim | None = None
+            if write_files:
+                request = self.job_registry.build_request(file_path, profile, output_dir)
+                claim = self.job_registry.try_claim(request)
+                if claim.kind == "cache_hit":
+                    results.append(claim.response or {})
+                    continue
+                if claim.kind == "active":
+                    response = dict(claim.response or {})
+                    response.update(
+                        {
+                            "count": 0,
+                            "device": self.device,
+                            "gpu": self.gpu_summary,
+                            "loaded_engines": self.loaded_engines,
+                            "loaded_models": self.loaded_models,
+                            "results": [],
+                        }
+                    )
+                    return response
+
+            try:
+                with self._lock:
+                    if profile.engine in HEAVY_ISOLATED_ENGINES:
+                        if write_files:
+                            result = self._process_heavy_isolated(file_path, output_dir, profile)
+                        else:
+                            runtime_dir = self.project_root / "_server"
+                            runtime_dir.mkdir(parents=True, exist_ok=True)
+                            with tempfile.TemporaryDirectory(
+                                prefix=f"localocr-{profile.engine}-", dir=runtime_dir
+                            ) as tmp:
+                                result = self._process_heavy_isolated(file_path, Path(tmp), profile)
                     else:
-                        runtime_dir = self.project_root / "_server"
-                        runtime_dir.mkdir(parents=True, exist_ok=True)
-                        with tempfile.TemporaryDirectory(prefix=f"localocr-{profile.engine}-", dir=runtime_dir) as tmp:
-                            result = self._process_heavy_isolated(file_path, Path(tmp), profile)
-                else:
-                    result = self.process_file(file_path, engine_choice, model_choice)
-                if write_files and "output_files" not in result:
-                    paths = write_outputs(result, file_path, output_dir)
-                    result["output_files"] = {k: str(v) for k, v in paths.items()}
-                elif write_files and "output_files" in result:
-                    stem = safe_output_stem(file_path)
-                    result["output_files"] = {
-                        "txt": str(output_dir / f"{stem}.txt"),
-                        "md": str(output_dir / f"{stem}.md"),
-                        "json": str(output_dir / f"{stem}.json"),
-                    }
+                        result = self.process_file(file_path, engine_choice, model_choice)
+                    if write_files and "output_files" not in result:
+                        paths = write_outputs(result, file_path, output_dir)
+                        result["output_files"] = {k: str(v) for k, v in paths.items()}
+                    elif write_files and "output_files" in result:
+                        stem = safe_output_stem(file_path)
+                        result["output_files"] = {
+                            "txt": str(output_dir / f"{stem}.txt"),
+                            "md": str(output_dir / f"{stem}.md"),
+                            "json": str(output_dir / f"{stem}.json"),
+                        }
+                if claim is not None and claim.kind == "run":
+                    result = self.job_registry.complete(claim, result)
                 results.append(result)
+            except Exception as exc:
+                if claim is not None and claim.kind == "run":
+                    self.job_registry.fail(claim, exc)
+                raise
+            finally:
+                if claim is not None and claim.kind == "run":
+                    self.job_registry.release(claim)
         return {
             "ok": True,
             "count": len(results),

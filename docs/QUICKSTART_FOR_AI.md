@@ -70,6 +70,12 @@ E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
+查询某个任务：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
+```
+
 底层 wrapper 仍可直接识别一个路径：
 
 ```powershell
@@ -123,6 +129,11 @@ API 请求体：
 }
 ```
 
+API 写盘任务会按源文件路径、文件内容、模型 profile 和输出目录生成 `job_key`。首次完成时结果里会出现
+`cache_status=stored`；同一任务再次提交且输出文件仍在时返回 `cache_status=cache_hit`，不会重新加载模型或重复 OCR。
+如果同一任务正在运行，API 会返回 `status=active_localocr_task`、`job_key` 和
+`recommendation=do_not_blindly_retry`；此时先查 `/jobs/<job_key>`、输出目录或后台进程，不要马上再提交一次。
+
 ## 路由规则（auto 模式）
 
 | 输入 | 引擎 |
@@ -143,7 +154,8 @@ API 请求体：
 送达地址确认书、空白表格和纯文字 PDF 自动改走 `ocr`。如果直接调用 `ocr_once.ps1`
 或底层 API，`auto` 仍会把 PDF 送入 VL，可能超过 Codex 外层 shell 超时；看到
 “无输出 + exit code 124”时，先检查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess` 和输出目录，
-不要盲目重复提交同一份 PDF。
+不要盲目重复提交同一份 PDF。若上一轮已经进入 API，重复请求可能直接返回 `active_localocr_task`
+或在完成后返回 `cache_hit`；优先读取返回的 `job_key` 和 `results[].output_files`。
 
 ## 输出
 

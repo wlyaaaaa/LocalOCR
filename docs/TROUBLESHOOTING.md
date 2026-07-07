@@ -114,7 +114,7 @@ E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 常见短状态：
 
 - `triage_only`：只预检，没有提交 OCR。
-- `active_localocr_task`：后台已有 VL / Structure / PDF 子任务，先不要重复提交。
+- `active_localocr_task`：后台已有同一 API job 或 VL / Structure / PDF 子任务，先不要重复提交。
 - `client_timeout`：外层等待超时，已停止客户端等待；先看返回的 `active_tasks` 和输出目录。
 - `client_failed`：底层调用失败，看 `stderr_tail` 和 `/health`。
 
@@ -126,6 +126,16 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 Get-ChildItem E:\LocalOCR\outputs\api | Sort-Object LastWriteTime -Descending | Select-Object -First 10
 ```
 
+如果短 JSON 或成功结果里有 `job_key`，优先直接查任务状态：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
+```
+
+API 会把写盘任务登记在 `_server/jobs`。同一源文件、模型 profile 和输出目录正在运行时，
+第二个请求返回 `status=active_localocr_task`；已完成且输出文件仍存在时，第二个请求返回
+`cache_status=cache_hit`。不要把 `cache_hit` 当成“没跑成功”，它表示结果文件已经可用。
+
 简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF 优先使用：
 
 ```powershell
@@ -136,7 +146,15 @@ E:\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto
 若调用方已经 124 退出且后台 VL 子进程长时间不产出，可以等待、读取已生成输出，
 或用 `release_resources.ps1` / `stop_server.ps1` 清理后改用 `-Engine ocr`。
 
-## 11. 启动 Ollama / 本地大模型前释放显存
+## 11. API 返回 cache_hit 但文件不存在或内容不是预期
+
+`cache_hit` 只有在 manifest 记录的 `output_files` 都存在时才会返回。若用户手动移动、覆盖或清空输出目录，
+下一次相同请求会重新跑 OCR 并刷新 manifest。
+
+若想强制重新生成同一文件的同一模型输出，可删除对应输出文件，或改用新的 `-OutDir`。`-Force` 只绕过
+`ocr_smart.ps1` 的前置后台任务拦截，不绕过 API 的任务缓存和运行中去重。
+
+## 12. 启动 Ollama / 本地大模型前释放显存
 
 LocalOCR API 可能常驻 PP-OCR 模型。启动 Ollama、本地大模型或其他重 GPU 任务前：
 
@@ -150,7 +168,7 @@ E:\LocalOCR\release_resources.ps1
 E:\LocalOCR\ocr_once.ps1 "E:\path\image.png" -StopAfter
 ```
 
-## 12. PP-StructureV3 报 Invalid OCR version
+## 13. PP-StructureV3 报 Invalid OCR version
 
 **现象**：把结构化管线配置成 `ocr_version="PP-OCRv6"` 时，报：
 
