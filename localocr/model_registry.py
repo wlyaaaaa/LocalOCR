@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .router import route_engine
+from .smart_router import SmartRouteDecision, choose_smart_route, explain_explicit_model_route
 
 VALID_ENGINE_KEYS = {"ocr", "vl", "structure"}
 DEFAULT_PROFILE_PATH = Path(__file__).with_name("model_profiles.json")
@@ -93,6 +93,20 @@ def select_model_profile(
     engine_choice: str = "auto",
     model_choice: str | None = None,
 ) -> ModelProfile:
+    profile, _route = select_model_profile_with_route(
+        path,
+        engine_choice=engine_choice,
+        model_choice=model_choice,
+    )
+    return profile
+
+
+def select_model_profile_with_route(
+    path: Path,
+    *,
+    engine_choice: str = "auto",
+    model_choice: str | None = None,
+) -> tuple[ModelProfile, SmartRouteDecision]:
     if model_choice:
         profile = resolve_model_reference(model_choice)
         if engine_choice != "auto" and profile.engine != engine_choice:
@@ -100,10 +114,18 @@ def select_model_profile(
                 f"model profile {profile.id!r} uses engine {profile.engine!r} "
                 f"and does not match engine {engine_choice!r}"
             )
-        return profile
+        route = explain_explicit_model_route(
+            path,
+            engine_choice=engine_choice,
+            model_choice=model_choice,
+            model_engine=profile.engine,
+            model_id=profile.id,
+        )
+        return profile, route
 
-    engine_key = route_engine(path, engine_choice)
-    return resolve_model_reference(engine_key)
+    route = choose_smart_route(path, engine_choice=engine_choice, model_choice=model_choice)
+    profile = resolve_model_reference(route.effective_engine)
+    return profile, route.with_model_id(profile.id)
 
 
 def get_engine(model_ref: str, device: str = "gpu:0"):

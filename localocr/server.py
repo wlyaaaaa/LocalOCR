@@ -30,7 +30,7 @@ class OCRUploadOptions(BaseModel):
 
 app = FastAPI(
     title="LocalOCR API",
-    version="0.4.0",
+    version="0.5.0",
     description="Local-only OCR API for PP-OCRv6_medium, PaddleOCR-VL-1.6, and PP-StructureV3.",
 )
 

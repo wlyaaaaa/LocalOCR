@@ -31,6 +31,13 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("API startup already in progress", script)
         self.assertIn("startup timed out while existing process is still running", script)
 
+    def test_start_server_fails_fast_on_non_localocr_health(self) -> None:
+        script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Assert-LocalOcrHealthPayload", script)
+        self.assertIn("non-LocalOCR service", script)
+        self.assertIn("Use -Port", script)
+
     def test_stop_server_cleans_api_vl_children_and_pid_file(self) -> None:
         script = (ROOT / "stop_server.ps1").read_text(encoding="utf-8")
 
@@ -65,13 +72,21 @@ class WindowsWrapperTest(unittest.TestCase):
     def test_ocr_smart_wrapper_exists(self) -> None:
         self.assertTrue((ROOT / "ocr_smart.ps1").exists())
 
-    def test_ocr_smart_routes_auto_pdf_to_ocr_for_codex(self) -> None:
+    def test_ocr_smart_uses_smart_router_v2_preview(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("Resolve-SmartEngine", script)
+        self.assertIn("Resolve-SmartRoutePreview", script)
         self.assertIn('".pdf"', script)
         self.assertIn('$RequestedEngine -ne "auto"', script)
-        self.assertIn("simple_pdf_prefers_ocr", script)
+        self.assertIn("pdf_plain_text_prefers_ocr", script)
+        self.assertIn("pdf_complex_layout_prefers_vl", script)
+        self.assertNotIn("simple_pdf_prefers_ocr", script)
+
+    def test_ocr_smart_passes_requested_engine_to_api_router(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("-Engine $(Quote-PowerShellString $Engine)", script)
+        self.assertNotIn("-Engine $(Quote-PowerShellString $route.engine)", script)
 
     def test_ocr_smart_has_outer_timeout_and_compact_timeout_json(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")

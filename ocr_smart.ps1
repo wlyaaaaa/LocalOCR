@@ -50,7 +50,7 @@ function Quote-PowerShellString {
     return "'" + ($Value -replace "'", "''") + "'"
 }
 
-function Resolve-SmartEngine {
+function Resolve-SmartRoutePreview {
     param(
         [Parameter(Mandatory = $true)][string]$InputPath,
         [Parameter(Mandatory = $true)][string]$RequestedEngine,
@@ -59,29 +59,64 @@ function Resolve-SmartEngine {
 
     if ($RequestedModel) {
         return [pscustomobject]@{
-            engine = $RequestedEngine
+            effective_engine = $RequestedEngine
             reason = "explicit_model"
+            confidence = 1.0
+            signals = @("explicit_model")
         }
     }
 
     if ($RequestedEngine -ne "auto") {
         return [pscustomobject]@{
-            engine = $RequestedEngine
+            effective_engine = $RequestedEngine
             reason = "explicit_$RequestedEngine"
+            confidence = 1.0
+            signals = @("explicit_engine")
         }
     }
 
     $extension = [System.IO.Path]::GetExtension($InputPath).ToLowerInvariant()
-    if ($extension -eq ".pdf") {
+    $fileName = [System.IO.Path]::GetFileName($InputPath).ToLowerInvariant()
+    $complexKeywords = @("table", "formula", "layout", "multi", "column", "lecture", "paper", "论文", "公式", "表格", "多栏", "课件")
+
+    if ($extension -in @(".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff")) {
         return [pscustomobject]@{
-            engine = "ocr"
-            reason = "simple_pdf_prefers_ocr"
+            effective_engine = "ocr"
+            reason = "image_prefers_ocr"
+            confidence = 0.9
+            signals = @("image", "ext:$extension")
+        }
+    }
+
+    if ($extension -eq ".pdf") {
+        $signals = @("pdf", "ext:.pdf")
+        foreach ($keyword in $complexKeywords) {
+            if ($fileName.Contains($keyword)) {
+                $signals += "complex_keyword:$keyword"
+            }
+        }
+        if ($signals.Count -gt 2) {
+            return [pscustomobject]@{
+                effective_engine = "vl"
+                reason = "pdf_complex_layout_prefers_vl"
+                confidence = 0.82
+                signals = $signals
+            }
+        }
+        $signals += "plain_pdf_default"
+        return [pscustomobject]@{
+            effective_engine = "ocr"
+            reason = "pdf_plain_text_prefers_ocr"
+            confidence = 0.72
+            signals = $signals
         }
     }
 
     return [pscustomobject]@{
-        engine = "auto"
-        reason = "non_pdf_uses_existing_auto"
+        effective_engine = "ocr"
+        reason = "unknown_type_prefers_ocr"
+        confidence = 0.5
+        signals = @("unknown_type", "ext:$extension")
     }
 }
 
@@ -182,7 +217,7 @@ function Select-JsonObjectText {
     return $Text.Substring($start, $end - $start + 1)
 }
 
-$route = Resolve-SmartEngine -InputPath $Path -RequestedEngine $Engine -RequestedModel $Model
+$route = Resolve-SmartRoutePreview -InputPath $Path -RequestedEngine $Engine -RequestedModel $Model
 $active = Get-LocalOcrActiveTasks
 $health = Get-LocalOcrHealthCompact -Port $Port -HostAddress $HostAddress
 
@@ -192,8 +227,10 @@ if ($TriageOnly) {
         status = "triage_only"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         active_tasks_count = @($active.tasks).Count
         active_tasks = $active.tasks
         active_probe_timed_out = $active.timed_out
@@ -209,8 +246,10 @@ if ((@($active.tasks).Count -gt 0) -and (-not $Force)) {
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         active_tasks_count = @($active.tasks).Count
         active_tasks = $active.tasks
         health = $health
@@ -222,7 +261,7 @@ $ocrOnce = Join-Path $ScriptDir "ocr_once.ps1"
 $commandParts = @(
     "`$ErrorActionPreference = 'Stop'",
     "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
-    "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $route.engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
+    "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $Engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
 )
 if ($Model) {
     $commandParts[-1] += " -Model $(Quote-PowerShellString $Model)"
@@ -249,8 +288,10 @@ if ($client.timed_out) {
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         outer_timeout_sec = $OuterTimeoutSec
         active_tasks_count = @($activeAfterTimeout.tasks).Count
         active_tasks = $activeAfterTimeout.tasks
@@ -268,8 +309,10 @@ if ($client.exit_code -ne 0) {
         recommendation = "inspect_stderr_and_health"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         exit_code = $client.exit_code
         stdout_tail = Get-TextTail $client.stdout
         stderr_tail = Get-TextTail $client.stderr
@@ -286,8 +329,10 @@ if (-not $jsonText) {
         recommendation = "inspect_stdout_tail"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         stdout_tail = Get-TextTail $client.stdout
         stderr_tail = Get-TextTail $client.stderr
     })
@@ -299,7 +344,10 @@ try {
     $result | Add-Member -NotePropertyName smart -NotePropertyValue ([pscustomobject]@{
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        preview_effective_engine = $route.effective_engine
+        preview_route_reason = $route.reason
+        preview_route_confidence = $route.confidence
+        preview_route_signals = $route.signals
         route_reason = $route.reason
         outer_timeout_sec = $OuterTimeoutSec
     }) -Force
@@ -311,8 +359,10 @@ try {
         recommendation = "inspect_stdout_tail"
         requested_engine = $Engine
         requested_model = $Model
-        effective_engine = $route.engine
+        effective_engine = $route.effective_engine
         route_reason = $route.reason
+        route_confidence = $route.confidence
+        route_signals = $route.signals
         error = $_.Exception.Message
         stdout_tail = Get-TextTail $client.stdout
         stderr_tail = Get-TextTail $client.stderr

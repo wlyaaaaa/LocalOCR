@@ -14,6 +14,7 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
                                     │   ├─ model_registry.py   │
                                     │   ├─ model_profiles.json │
                                     │   ├─ router.py           │
+                                    │   ├─ smart_router.py     │
                                     │   ├─ service.py          │
                                     │   ├─ server.py           │
                                     │   ├─ job_registry.py     │
@@ -42,9 +43,10 @@ Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
 | `gpu_probe.py` | 启动时强制验证 GPU 可用（sm_120+、算子执行），失败即退出，不回退 CPU |
 | `model_profiles.json` | 声明 profile id、默认模型、engine 族、adapter、能力标签和 Paddle 初始化参数 |
 | `model_registry.py` | 读取 profile，解析 `ocr/vl/structure` 默认别名，按 `--model` 创建具体 adapter |
-| `router.py` | 按扩展名分流：图片→ocr，PDF→vl；`--engine` 可覆盖到 `structure`；不直接绑定具体模型 |
+| `router.py` | 文件扩展名判断和输入文件收集基础工具 |
+| `smart_router.py` | Smart Router v2；在不加载模型的前提下，用扩展名、文件名关键词和显式参数生成可解释 `auto` 路由 |
 | `job_registry.py` | 文件型任务登记、缓存命中、运行中去重和 `job_key` 状态 manifest |
-| `service.py` | 常驻 OCR 运行时，按具体 profile 缓存轻量模型；VL/Structure 重模型使用隔离子进程；写盘任务先经过 job registry |
+| `service.py` | 常驻 OCR 运行时，按具体 profile 缓存轻量模型；VL/Structure 重模型使用隔离子进程；写盘任务先经过 Smart Router v2 和 job registry |
 | `server.py` | FastAPI 本地 API，提供 `/health`、`/jobs/{job_key}`、`/ocr/path`、`/ocr/file`，请求体支持 `model` |
 | `engines/ppocrv6.py` | PP-OCRv6 adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
 | `engines/vl.py` | PaddleOCR-VL adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
@@ -75,6 +77,12 @@ PaddleOCR-VL 和 PP-StructureV3 请求通过隔离子进程执行，避免重模
 `_server/wsl-server.pid`，`stop_server.ps1` 停止 WSL 内服务后会清理该文件。
 `loaded_engines` 保留兼容字段，返回已缓存 profile 的 engine 族；`loaded_models`
 返回具体 profile id，供换模型和验收时确认。
+
+`engine=auto` 先经过 Smart Router v2。显式 `engine` 和 `model` 永远优先；`structure`
+不参与自动路由。普通图片和普通扫描 PDF / 表单默认走 OCR；文件名含 `table`、`formula`、
+`layout`、`multi`、`论文`、`公式`、`表格`、`多栏`、`课件` 等复杂版面信号时走 VL。
+API 响应的每个 `results[]` 都包含 `route`，记录 `effective_engine`、`reason`、
+`signals`、`confidence` 和 `model_id`，用于排障和缓存审计。
 
 写盘 OCR 请求在推理前会登记到 `_server/jobs/<job_key>.json`，并用同名 `.lock`
 做原子 claim。`job_key` 由源文件路径、文件内容 hash、模型 profile、engine 和输出目录决定。

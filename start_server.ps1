@@ -12,13 +12,37 @@ New-Item -ItemType Directory -Force -Path $ServerDir | Out-Null
 $LogPath = Join-Path $ServerDir "localocr-api.log"
 $PidPath = Join-Path $ServerDir "wsl-server.pid"
 
+function Assert-LocalOcrHealthPayload {
+    param(
+        [AllowNull()]$Health
+    )
+
+    if ($null -eq $Health) {
+        return $false
+    }
+    if ($Health.PSObject.Properties.Name -contains "ok" -and $Health.ok) {
+        return $true
+    }
+
+    $summary = ""
+    try {
+        $summary = ($Health | ConvertTo-Json -Depth 6 -Compress)
+    } catch {
+        $summary = [string]$Health
+    }
+    throw "[LocalOCR] Port $Port responded to /health, but it is a non-LocalOCR service. Use -Port to choose another port. Response: $summary"
+}
+
 function Get-LocalOcrHealth {
     try {
         $health = Invoke-RestMethod -Uri "http://${HostAddress}:$Port/health" -Method Get -TimeoutSec 15
-        if ($health.ok) {
+        if (Assert-LocalOcrHealthPayload -Health $health) {
             return $health
         }
     } catch {
+        if ($_.Exception.Message -like "*non-LocalOCR service*") {
+            throw
+        }
         return $null
     }
     return $null
@@ -60,10 +84,13 @@ function Wait-LocalOcrHealth {
         Start-Sleep -Seconds 2
         try {
             $health = Invoke-RestMethod -Uri "http://${HostAddress}:$Port/health" -Method Get -TimeoutSec 15
-            if ($health.ok) {
+            if (Assert-LocalOcrHealthPayload -Health $health) {
                 return $health
             }
         } catch {
+            if ($_.Exception.Message -like "*non-LocalOCR service*") {
+                throw
+            }
             $script:lastHealthError = $_
         }
     } while ((Get-Date) -lt $Deadline)

@@ -6,9 +6,9 @@
 ## 特性
 
 - **中文优先**：默认 PP-OCRv6_medium 检测+识别，方向检测 / 文档矫正 / 文本行旋转纠正全开。
-- **复杂文档用 VL**：PDF、合同、论文、表格、公式、多栏排版默认走 **PaddleOCR-VL-1.6**。
+- **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
-- **自动分流**：图片类 → PP-OCRv6_medium；PDF → PaddleOCR-VL-1.6，无需手动选模型。
+- **Smart Router v2 自动分流**：图片 → PP-OCRv6_medium；普通扫描 PDF / 表单 → OCR；文件名提示表格、公式、多栏、论文、课件等复杂版面 → VL；每次结果返回 `route.reason` / `route.signals` / `route.confidence`。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
@@ -71,7 +71,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 **方式 C — 常驻本地 API（推荐给 AI 助手/高频 OCR）**：
 
 ```powershell
-# Codex / AI 助手默认入口：简单 PDF 会自动改走 OCR，且外层最多等待 120 秒
+# Codex / AI 助手默认入口：外层最多等待 120 秒，实际 OCR/VL 由 API Smart Router v2 决定
 .\ocr_smart.ps1 "E:\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
 
 # 只做轻量预检，不提交 OCR 任务
@@ -115,7 +115,8 @@ HTTP 入口：
 - `POST http://127.0.0.1:8765/ocr/path`
 - `POST http://127.0.0.1:8765/ocr/file`
 
-说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=vl` / `engine=structure`
+说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=auto` 会先经过
+Smart Router v2；`results[].route` 会解释最终选择。`engine=vl` / `engine=structure`
 会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
 新字段 `loaded_models` 返回 API 进程内已加载的具体 profile id。
 
@@ -132,7 +133,9 @@ HTTP 入口：
 ```
 
 `ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
-`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。API 还会给每个写盘任务返回
+`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。最终路由看
+`results[].route.effective_engine`、`results[].route.reason`、`results[].route.signals` 和
+`results[].route.confidence`；`smart.preview_*` 只是 PowerShell 预检预测。API 还会给每个写盘任务返回
 `job_key` / `job_id` / `cache_status`；同一源文件、模型 profile 和输出目录再次提交时，若输出文件仍存在，会直接返回
 `cache_status=cache_hit`。若任务正在运行，API 返回 `status=active_localocr_task` 和 `recommendation=do_not_blindly_retry`，
 不要盲目重复提交；可用 `GET /jobs/<job_key>` 查询状态。
@@ -151,7 +154,8 @@ localocr/        源码
   cli.py         命令行入口
   model_registry.py / model_profiles.json
                  模型 profile 注册表；把模型选择与推理实现解耦
-  router.py      自动分流
+  router.py      扩展名和文件收集基础工具
+  smart_router.py Smart Router v2，可解释 auto 路由策略
   engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
   job_registry.py 文件型任务缓存、去重和 job 状态 manifest
   outputs.py     TXT/MD/JSON 输出

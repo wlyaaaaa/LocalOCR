@@ -12,7 +12,7 @@ from typing import Any
 
 from .gpu_probe import format_probe, probe_gpu
 from .job_registry import JobClaim, JobRegistry
-from .model_registry import ModelProfile, get_engine, select_model_profile
+from .model_registry import ModelProfile, get_engine, select_model_profile, select_model_profile_with_route
 from .outputs import safe_output_stem, write_outputs
 from .pdf_utils import render_pdf_to_files
 from .router import collect_files, is_pdf
@@ -185,13 +185,7 @@ class OCRService:
             "pages": pages,
         }
 
-    def process_file(
-        self,
-        path: Path,
-        engine_choice: str = "auto",
-        model_choice: str | None = None,
-    ) -> dict[str, Any]:
-        profile = select_model_profile(path, engine_choice=engine_choice, model_choice=model_choice)
+    def _process_file_with_profile(self, path: Path, profile: ModelProfile) -> dict[str, Any]:
         engine = self._engine(profile)
         if is_pdf(path):
             result = self._ocr_pdf_with_engine(path, profile, engine)
@@ -201,6 +195,15 @@ class OCRService:
         result["engine_key"] = profile.engine
         result["model_id"] = profile.id
         return result
+
+    def process_file(
+        self,
+        path: Path,
+        engine_choice: str = "auto",
+        model_choice: str | None = None,
+    ) -> dict[str, Any]:
+        profile = select_model_profile(path, engine_choice=engine_choice, model_choice=model_choice)
+        return self._process_file_with_profile(path, profile)
 
     def process_inputs(
         self,
@@ -219,13 +222,20 @@ class OCRService:
         output_dir = Path(out_dir) if out_dir is not None else Path("outputs/api")
         results: list[dict[str, Any]] = []
         for file_path in files:
-            profile = select_model_profile(file_path, engine_choice=engine_choice, model_choice=model_choice)
+            profile, route = select_model_profile_with_route(
+                file_path,
+                engine_choice=engine_choice,
+                model_choice=model_choice,
+            )
+            route_dict = route.to_dict()
             claim: JobClaim | None = None
             if write_files:
                 request = self.job_registry.build_request(file_path, profile, output_dir)
                 claim = self.job_registry.try_claim(request)
                 if claim.kind == "cache_hit":
-                    results.append(claim.response or {})
+                    cached = dict(claim.response or {})
+                    cached.setdefault("route", route_dict)
+                    results.append(cached)
                     continue
                 if claim.kind == "active":
                     response = dict(claim.response or {})
@@ -236,6 +246,7 @@ class OCRService:
                             "gpu": self.gpu_summary,
                             "loaded_engines": self.loaded_engines,
                             "loaded_models": self.loaded_models,
+                            "route": route_dict,
                             "results": [],
                         }
                     )
@@ -254,17 +265,11 @@ class OCRService:
                             ) as tmp:
                                 result = self._process_heavy_isolated(file_path, Path(tmp), profile)
                     else:
-                        result = self.process_file(file_path, engine_choice, model_choice)
-                    if write_files and "output_files" not in result:
+                        result = self.process_file(file_path, profile.engine, profile.id)
+                    result["route"] = route_dict
+                    if write_files:
                         paths = write_outputs(result, file_path, output_dir)
                         result["output_files"] = {k: str(v) for k, v in paths.items()}
-                    elif write_files and "output_files" in result:
-                        stem = safe_output_stem(file_path)
-                        result["output_files"] = {
-                            "txt": str(output_dir / f"{stem}.txt"),
-                            "md": str(output_dir / f"{stem}.md"),
-                            "json": str(output_dir / f"{stem}.json"),
-                        }
                 if claim is not None and claim.kind == "run":
                     result = self.job_registry.complete(claim, result)
                 results.append(result)

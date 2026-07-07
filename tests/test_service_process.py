@@ -51,6 +51,23 @@ class IsolatedProcessTest(unittest.TestCase):
             self.assertTrue(second["ok"])
             self.assertEqual(second["results"][0]["cache_status"], "cache_hit")
             self.assertEqual(second["results"][0]["output_files"], first["results"][0]["output_files"])
+            self.assertEqual(second["results"][0]["route"]["effective_engine"], "ocr")
+            self.assertEqual(service.calls, 1)
+
+    def test_service_routes_auto_plain_pdf_to_ocr_with_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "address-confirmation.pdf"
+            source.write_bytes(b"%PDF-1.7 plain scan")
+            service = FakeCacheService(tmp_dir=root / "tmp", job_dir=root / "jobs")
+
+            response = service.process_inputs([source], engine_choice="auto", out_dir=root / "out")
+
+            route = response["results"][0]["route"]
+            self.assertEqual(route["requested_engine"], "auto")
+            self.assertEqual(route["effective_engine"], "ocr")
+            self.assertEqual(route["reason"], "pdf_plain_text_prefers_ocr")
+            self.assertEqual(route["model_id"], "ppocrv6-medium")
             self.assertEqual(service.calls, 1)
 
     def test_service_returns_active_job_without_running_duplicate(self) -> None:
@@ -73,6 +90,7 @@ class IsolatedProcessTest(unittest.TestCase):
             self.assertEqual(response["status"], "active_localocr_task")
             self.assertEqual(response["recommendation"], "do_not_blindly_retry")
             self.assertEqual(response["job_key"], request.job_key)
+            self.assertEqual(response["route"]["effective_engine"], "ocr")
             self.assertEqual(service.calls, 0)
 
     def test_service_treats_structure_as_isolated_heavy_engine(self) -> None:
