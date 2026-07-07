@@ -31,6 +31,48 @@
 > 为何不用 Windows 原生：Paddle 官方 Windows GPU wheel 仅 cu118/cu126，不含 sm_120 cubin，
 > 在 Blackwell 上不可靠。Linux cu129 wheel 原生支持 sm_120。详见 `docs/design-spec.md`。
 
+## AI / Codex 默认入口
+
+给 AI 助手调用时，默认先用 bounded smart wrapper，不要直接拉长时间阻塞 PowerShell：
+
+```powershell
+.\ocr_smart.ps1 "E:\path\file-or-folder" -Engine auto -OuterTimeoutSec 120 -TimeoutSec 3600 -StartupTimeoutSec 600
+```
+
+默认决策：
+
+- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v2 默认走 OCR。
+- 复杂表格、公式、多栏、论文、课件、整页复杂版面：显式 `-Engine vl`，或让带复杂文件名信号的 PDF 由 `auto` 路由到 VL。
+- 需要表格 HTML、版面块、公式、印章、区域检测、坐标：显式 `-Engine structure`。
+- 需要指定或替换具体模型：用 `-Model <profile-id>` / `--model <profile-id>`，并先改 `localocr/model_profiles.json`，不要把模型名硬编码进 wrapper 或服务层。
+- 遇到 `status=active_localocr_task`、`status=client_timeout`、`job_key`、`cache_status=cache_hit` 时，先查 `/jobs/<job_key>`、输出目录和后台任务，不要盲目重复提交同一文件。
+
+## 最小验收
+
+文档、wrapper、路由或模型 profile 改动后，优先跑轻量验收；不要把真实 OCR + `-StopAfter` 当成默认 smoke。
+
+```powershell
+# PowerShell / Markdown 格式检查
+git diff --check
+
+# 不加载真实模型的路由和 Windows wrapper 回归
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_windows_wrappers"
+
+# 改过 model_profiles.json 或 adapter 后，再重启 API 做一个小图 smoke
+.\stop_server.ps1
+.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\probe_text.png" -Engine auto -OuterTimeoutSec 180 -StartupTimeoutSec 900
+```
+
+常规验收不要加 `-StopAfter`；它会释放常驻服务并让下一次 OCR 冷启动，可能把短检查拖到 1-2 分钟。只有要切换到 Ollama、本地大模型、游戏或其他重 GPU 任务前，才用 `release_resources.ps1` / `-StopAfter`。
+
+## 常见误用
+
+- `cache_status=cache_hit` 是成功复用已有输出，不是失败；直接读 `results[].output_files`。
+- `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
+- `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
+- `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；直接改用 `-Port 8766`，不要继续等冷启动。
+- Word / PPT / Excel / 数字 PDF 不应先丢给 OCR；先用原生文档/PDF解析，只有扫描件、截图、拍照页、嵌入图片文字才用 LocalOCR。
+
 ## 快速开始
 
 ### 1. 安装（一次性）
