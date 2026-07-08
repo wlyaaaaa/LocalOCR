@@ -149,8 +149,8 @@ try {
 
     Write-Host "[LocalOCR] Starting API server at http://${HostAddress}:$Port ..." -ForegroundColor Cyan
     Write-Host "[LocalOCR] Log: $LogPath" -ForegroundColor DarkGray
-    $wslLogPath = "/mnt/e/LocalOCR/_server/localocr-api.log"
-    $wslCommand = "cd /mnt/e/LocalOCR && exec scripts/run_in_wsl.sh -m localocr.server --host '$HostAddress' --port $Port >> '$wslLogPath' 2>&1"
+    $wslLogPath = "/mnt/e/Projects/Tools/LocalOCR/_server/localocr-api.log"
+    $wslCommand = "cd /mnt/e/Projects/Tools/LocalOCR && exec scripts/run_in_wsl.sh -m localocr.server --host '$HostAddress' --port $Port >> '$wslLogPath' 2>&1"
     $escapedCommand = $wslCommand.Replace('"', '\"')
     $arguments = "-d Ubuntu -e bash -lc `"$escapedCommand`""
     $process = Start-Process -FilePath "wsl.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru

@@ -7,5 +7,5 @@ export PADDLE_PDX_DISABLE_DEV_MODEL_WL=true
 # 国内环境：HuggingFace 不可达，优先用 ModelScope/AIStudio/BOS，跳过连通性检查。
 export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true
 export PADDLE_PDX_MODEL_SOURCE=modelscope
-cd /mnt/e/LocalOCR
+cd /mnt/e/Projects/Tools/LocalOCR
 exec /root/localocr-venv/bin/python "$@"

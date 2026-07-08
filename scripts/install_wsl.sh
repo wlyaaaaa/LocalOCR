@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # LocalOCR 一键安装脚本（在 WSL2 Ubuntu 内运行）。
-# 用法（在 Windows PowerShell）：wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/install_wsl.sh
+# 用法（在 Windows PowerShell）：wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 set -e
 
 VENV=/root/localocr-venv
-PROJ=/mnt/e/LocalOCR
+PROJ=/mnt/e/Projects/Tools/LocalOCR
 
 echo "==== [1/5] 系统依赖 ===="
 apt-get update -qq
@@ -49,4 +49,4 @@ echo "GPU 探针："
 "$VENV/bin/python" -c "from localocr.gpu_probe import probe_gpu, format_probe; print(format_probe(probe_gpu()))" 2>&1 | tail -3 || true
 echo ""
 echo "用法：在 Windows 里把文件拖到 start.bat 上，或："
-echo "  wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli \"路径\""
+echo "  wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli \"路径\""

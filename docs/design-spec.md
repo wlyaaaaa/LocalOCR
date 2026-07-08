@@ -41,7 +41,7 @@ wheel 自带 CUDA/cuDNN/NCCL 运行库，无需单独装 CUDA toolkit。
 ## 3. 架构
 
 ```
-E:\LocalOCR\                         (源码放 Windows 端，便于 git/编辑；运行在 WSL)
+E:\Projects\Tools\LocalOCR\                         (源码放 Windows 端，便于 git/编辑；运行在 WSL)
 ├─ localocr/
 │  ├─ __init__.py
 │  ├─ gpu_probe.py      # GPU 强制探针，失败即退出

@@ -11,8 +11,8 @@ from localocr.path_utils import to_windows_hint, to_wsl_path
 class PathUtilsTest(unittest.TestCase):
     def test_windows_backslash_path_to_wsl(self):
         self.assertEqual(
-            str(to_wsl_path(r"E:\LocalOCR\tests\samples\sample.png")),
-            "/mnt/e/LocalOCR/tests/samples/sample.png",
+            str(to_wsl_path(r"E:\Projects\Tools\LocalOCR\tests\samples\sample.png")),
+            "/mnt/e/Projects/Tools/LocalOCR/tests/samples/sample.png",
         )
 
     def test_windows_slash_path_to_wsl(self):
@@ -29,14 +29,14 @@ class PathUtilsTest(unittest.TestCase):
 
     def test_wsl_path_stays_wsl(self):
         self.assertEqual(
-            str(to_wsl_path("/mnt/e/LocalOCR/tests/samples/sample.png")),
-            "/mnt/e/LocalOCR/tests/samples/sample.png",
+            str(to_wsl_path("/mnt/e/Projects/Tools/LocalOCR/tests/samples/sample.png")),
+            "/mnt/e/Projects/Tools/LocalOCR/tests/samples/sample.png",
         )
 
     def test_windows_hint(self):
         self.assertEqual(
-            to_windows_hint("/mnt/e/LocalOCR/outputs/a.md"),
-            r"E:\LocalOCR\outputs\a.md",
+            to_windows_hint("/mnt/e/Projects/Tools/LocalOCR/outputs/a.md"),
+            r"E:\Projects\Tools\LocalOCR\outputs\a.md",
         )
 
 

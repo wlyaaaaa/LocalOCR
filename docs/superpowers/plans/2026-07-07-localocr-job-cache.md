@@ -21,8 +21,8 @@
 ### Task 1: Job Registry Unit
 
 **Files:**
-- Create: `E:\LocalOCR\localocr\job_registry.py`
-- Create: `E:\LocalOCR\tests\test_job_registry.py`
+- Create: `E:\Projects\Tools\LocalOCR\localocr\job_registry.py`
+- Create: `E:\Projects\Tools\LocalOCR\tests\test_job_registry.py`
 
 **Interfaces:**
 - Produces: `JobRegistry(job_dir: Path)`, `JobRequest`, `JobClaim`, `build_request(...)`, `try_claim(...)`, `complete(...)`, `fail(...)`, `release(...)`.
@@ -41,7 +41,7 @@ Tests must cover:
 Run:
 
 ```powershell
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_job_registry"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_job_registry"
 ```
 
 Expected: fail because `localocr.job_registry` does not exist.
@@ -57,9 +57,9 @@ Run the same unittest command. Expected: OK.
 ### Task 2: Service Integration
 
 **Files:**
-- Modify: `E:\LocalOCR\localocr\service.py`
-- Modify: `E:\LocalOCR\localocr\server.py`
-- Modify: `E:\LocalOCR\tests\test_service_process.py`
+- Modify: `E:\Projects\Tools\LocalOCR\localocr\service.py`
+- Modify: `E:\Projects\Tools\LocalOCR\localocr\server.py`
+- Modify: `E:\Projects\Tools\LocalOCR\tests\test_service_process.py`
 
 **Interfaces:**
 - Consumes: `JobRegistry` from Task 1.
@@ -77,7 +77,7 @@ Tests must instantiate `OCRService(probe_on_start=False, job_dir=<tmp>)` with a 
 Run:
 
 ```powershell
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_service_process"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_service_process"
 ```
 
 Expected: fail because service has no job registry.
@@ -93,10 +93,10 @@ Run service and registry tests. Expected: OK.
 ### Task 3: Smart Wrapper and Docs
 
 **Files:**
-- Modify: `E:\LocalOCR\ocr_smart.ps1`
-- Modify: `E:\LocalOCR\README.md`
-- Modify: `E:\LocalOCR\docs\QUICKSTART_FOR_AI.md`
-- Modify: `E:\LocalOCR\docs\TROUBLESHOOTING.md`
+- Modify: `E:\Projects\Tools\LocalOCR\ocr_smart.ps1`
+- Modify: `E:\Projects\Tools\LocalOCR\README.md`
+- Modify: `E:\Projects\Tools\LocalOCR\docs\QUICKSTART_FOR_AI.md`
+- Modify: `E:\Projects\Tools\LocalOCR\docs\TROUBLESHOOTING.md`
 - Modify: `E:\.agents\skills\localocr\SKILL.md`
 
 **Interfaces:**
@@ -120,16 +120,16 @@ Document `_server/jobs`, cache hit behavior, running duplicate behavior, and `-F
 Run:
 
 ```powershell
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_job_registry tests.test_service_process tests.test_windows_wrappers"
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m compileall localocr"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_job_registry tests.test_service_process tests.test_windows_wrappers"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m compileall localocr"
 ```
 
 Then run a real OCR cache smoke:
 
 ```powershell
-& 'E:\LocalOCR\release_resources.ps1' -WslTimeoutSec 10
-& 'E:\LocalOCR\ocr_smart.ps1' 'E:\LocalOCR\tests\samples\probe_text.png' -Engine ocr -OuterTimeoutSec 180 -StartupTimeoutSec 900 -StopAfter -Force
-& 'E:\LocalOCR\ocr_smart.ps1' 'E:\LocalOCR\tests\samples\probe_text.png' -Engine ocr -OuterTimeoutSec 60 -StartupTimeoutSec 900 -StopAfter
+& 'E:\Projects\Tools\LocalOCR\release_resources.ps1' -WslTimeoutSec 10
+& 'E:\Projects\Tools\LocalOCR\ocr_smart.ps1' 'E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png' -Engine ocr -OuterTimeoutSec 180 -StartupTimeoutSec 900 -StopAfter -Force
+& 'E:\Projects\Tools\LocalOCR\ocr_smart.ps1' 'E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png' -Engine ocr -OuterTimeoutSec 60 -StartupTimeoutSec 900 -StopAfter
 ```
 
 Expected: first call runs OCR, second call returns `cache_status=cache_hit` without loading OCR.

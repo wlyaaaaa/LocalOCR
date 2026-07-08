@@ -3,7 +3,7 @@
 ## 运行架构
 
 ```
-Windows (E:\LocalOCR)                WSL2 Ubuntu 24.04
+Windows (E:\Projects\Tools\LocalOCR)                WSL2 Ubuntu 24.04
 ┌─────────────────┐                 ┌──────────────────────────┐
 │ start.bat/ps1   │  拖入文件/参数   │ run_in_wsl.sh            │
 │ (Windows入口)   │ ──────────────▶ │ (设 LD_LIBRARY_PATH 等)  │

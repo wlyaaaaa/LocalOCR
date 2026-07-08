@@ -27,7 +27,7 @@ foreach ($a in $Args) {
 }
 
 $argStr = ($wslArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
-$cmd = "bash /mnt/e/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli $argStr"
+$cmd = "bash /mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli $argStr"
 Write-Host "[LocalOCR] 启动识别..." -ForegroundColor Cyan
 wsl -d Ubuntu -e bash -c $cmd
 $code = $LASTEXITCODE

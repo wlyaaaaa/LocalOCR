@@ -36,7 +36,7 @@ Add tests for simple PDF -> OCR, complex PDF filename -> VL, image -> OCR, expli
 
 - [ ] **Step 2: Run tests to verify RED**
 
-Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router"`
+Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router"`
 
 Expected: failure because `localocr.smart_router` does not exist.
 
@@ -71,7 +71,7 @@ Add service tests asserting an auto simple PDF selects OCR route metadata withou
 
 - [ ] **Step 2: Run tests to verify RED**
 
-Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_service_process"`
+Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_service_process"`
 
 Expected: failure because route metadata is absent.
 
@@ -103,7 +103,7 @@ Update wrapper tests to expect Smart Router v2 naming and reject the old `simple
 
 - [ ] **Step 2: Run tests to verify RED**
 
-Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_windows_wrappers"`
+Run: `wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_windows_wrappers"`
 
 Expected: failure until wrapper text/docs are updated.
 
@@ -114,7 +114,7 @@ Keep wrapper bounded-time behavior, but align reason names with Smart Router v2 
 - [ ] **Step 4: Run focused and smoke tests**
 
 Run:
-- `wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_model_registry tests.test_service_process tests.test_windows_wrappers"`
-- `E:\LocalOCR\ocr_smart.ps1 "E:\LocalOCR\tests\samples\probe_text.png" -Engine auto -OutDir E:\LocalOCR\_server\smart-router-smoke -OuterTimeoutSec 180 -StartupTimeoutSec 900 -StopAfter`
+- `wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_model_registry tests.test_service_process tests.test_windows_wrappers"`
+- `E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -OutDir E:\Projects\Tools\LocalOCR\_server\smart-router-smoke -OuterTimeoutSec 180 -StartupTimeoutSec 900 -StopAfter`
 
 Expected: tests pass; smoke JSON includes `results[0].route.effective_engine`.

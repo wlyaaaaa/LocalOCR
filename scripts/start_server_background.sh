@@ -4,7 +4,7 @@ set -euo pipefail
 
 HOST="${1:-127.0.0.1}"
 PORT="${2:-8765}"
-PROJ=/mnt/e/LocalOCR
+PROJ=/mnt/e/Projects/Tools/LocalOCR
 SERVER_DIR="$PROJ/_server"
 LOG="$SERVER_DIR/localocr-api.log"
 PID_FILE="$SERVER_DIR/server.pid"

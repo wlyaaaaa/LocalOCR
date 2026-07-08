@@ -56,11 +56,11 @@
 git diff --check
 
 # 不加载真实模型的路由和 Windows wrapper 回归
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_windows_wrappers"
+wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_windows_wrappers"
 
 # 改过 model_profiles.json 或 adapter 后，再重启 API 做一个小图 smoke
 .\stop_server.ps1
-.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\probe_text.png" -Engine auto -OuterTimeoutSec 180 -StartupTimeoutSec 900
+.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -OuterTimeoutSec 180 -StartupTimeoutSec 900
 ```
 
 常规验收不要加 `-StopAfter`；它会释放常驻服务并让下一次 OCR 冷启动，可能把短检查拖到 1-2 分钟。只有要切换到 Ollama、本地大模型、游戏或其他重 GPU 任务前，才用 `release_resources.ps1` / `-StopAfter`。
@@ -80,7 +80,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/LocalOCR && scripts/run_in_wsl.sh -m unitte
 在 **Windows PowerShell** 里：
 
 ```powershell
-wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/install_wsl.sh
+wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 ```
 
 脚本会：创建 venv → 装 paddlepaddle-gpu cu129 → 装 paddleocr 3.7.0 → 预下载所有模型。
@@ -88,8 +88,8 @@ wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/install_wsl.sh
 
 ### 2. 使用
 
-**方式 A — 拖拽（最简单）**：把图片/PDF/文件夹拖到 `E:\LocalOCR\start.bat` 上，松手即跑。
-结果出现在 `E:\LocalOCR\outputs\` 下，每个输入文件产出 `.txt` / `.md` / `.json` 三份。
+**方式 A — 拖拽（最简单）**：把图片/PDF/文件夹拖到 `E:\Projects\Tools\LocalOCR\start.bat` 上，松手即跑。
+结果出现在 `E:\Projects\Tools\LocalOCR\outputs\` 下，每个输入文件产出 `.txt` / `.md` / `.json` 三份。
 
 **方式 B — 命令行**：
 
@@ -100,7 +100,7 @@ wsl -d Ubuntu -e bash /mnt/e/LocalOCR/scripts/install_wsl.sh
 等价于在 WSL 里：
 
 ```bash
-cd /mnt/e/LocalOCR
+cd /mnt/e/Projects/Tools/LocalOCR
 scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine auto --out-dir outputs
 ```
 
@@ -114,34 +114,34 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 
 ```powershell
 # Codex / AI 助手默认入口：外层最多等待 120 秒，实际 OCR/VL 由 API Smart Router v2 决定
-.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
+.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
 
 # 只做轻量预检，不提交 OCR 任务
-.\ocr_smart.ps1 "E:\LocalOCR\tests\samples\sample_scan.pdf" -TriageOnly
+.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -TriageOnly
 
 # 启动本机 API，只监听 127.0.0.1:8765
 .\start_server.ps1
 
 # 通过 API 调一次 OCR；如果服务未启动，会自动拉起
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
 
 # 指定具体模型 profile；适合未来新增/切换模型时做验收
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\probe_text.png" -Engine auto -Model ppocrv6-medium
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -Model ppocrv6-medium
 
 # VL / PDF / 公式等长任务可显式放宽客户端等待时间
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
 
 # 表格/版面块/公式/印章等需要结构化坐标和块类型时，用 PP-StructureV3
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
 
 # 查询某个 job_key 的状态或缓存可用性
 Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
 
 # 首次冷启动服务较慢时，可单独放宽服务启动等待时间
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
 
 # 一次性 OCR 后立即释放 API/GPU 资源
-.\ocr_once.ps1 "E:\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StopAfter
+.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StopAfter
 
 # 启动本地大模型、游戏或其他重 GPU 任务前，手动释放 LocalOCR
 .\release_resources.ps1
@@ -166,7 +166,7 @@ Smart Router v2；`results[].route` 会解释最终选择。`engine=vl` / `engin
 
 ```json
 {
-  "path": "E:\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
+  "path": "E:\\Projects\\Tools\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
   "engine": "ocr",
   "model": "ppocrv6-medium",
   "recursive": false,
