@@ -70,7 +70,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 - `cache_status=cache_hit` 是成功复用已有输出，不是失败；直接读 `results[].output_files`。
 - `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
 - `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
-- `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；直接改用 `-Port 8766`，不要继续等冷启动。
+- `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`8766` 属于 ChineseASR，不是 LocalOCR 的回退端口。
 - Word / PPT / Excel / 数字 PDF 不应先丢给 OCR；先用原生文档/PDF解析，只有扫描件、截图、拍照页、嵌入图片文字才用 LocalOCR。
 
 ## 快速开始

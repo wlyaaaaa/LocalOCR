@@ -67,9 +67,8 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 
 - venv 中缺 `fastapi` / `uvicorn` / `python-multipart`，重新运行 `scripts/install_wsl.sh` 或手动安装依赖。
 - GPU 探针失败，按本文第 1 节检查 WSL libcuda。
-- 端口 `8765` 被占用，使用 `.\start_server.ps1 -Port 8766`。
-- 如果 `start_server.ps1` 报 `non-LocalOCR service`，说明该端口上的 `/health` 不是 LocalOCR，例如本机 `zh_asr`
-  也可能监听 `127.0.0.1:8765`。不要继续等启动超时，直接换端口：`ocr_smart.ps1 ... -Port 8766`。
+- 端口 `8765` 被占用时，先查询 `E:\PCConfig` 的端口注册并确认占用者；需要并存时，只选择已验证的空闲端口并显式传给 `-Port`。`8766` 属于 ChineseASR，不是 LocalOCR 的回退端口。
+- 如果 `start_server.ps1` 报 `non-LocalOCR service`，说明该端口上的 `/health` 不是 LocalOCR。不要继续等待启动超时；按上一条确认端口所有者和空闲端口，不要硬编码另一个服务的端口。
 - 首次冷启动超过启动等待时间。`ocr_once.ps1 -TimeoutSec` 只控制 OCR 请求等待，不控制 API 服务启动；冷启动慢但重试成功时，改用 `-StartupTimeoutSec 900` 或先单独运行 `.\start_server.ps1 -StartupTimeoutSec 900`。`start_server.ps1` 会用启动锁和 `wsl-server.pid` 识别正在启动的 API 进程，重试时等待现有进程变为 ready，而不是再启动第二个服务。
 
 停止残留服务：
