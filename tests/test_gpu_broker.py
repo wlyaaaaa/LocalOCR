@@ -86,7 +86,7 @@ class HeavyIntegrationGuardTests(unittest.TestCase):
         script = Path(__file__).resolve().parent / "run_tests.py"
 
         completed = subprocess.run(
-            [sys.executable, str(script)],
+            [sys.executable, "-X", "importtime", str(script)],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -96,6 +96,7 @@ class HeavyIntegrationGuardTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("--allow-heavy", completed.stderr)
+        self.assertNotIn("paddle", (completed.stdout + completed.stderr).lower())
 
 
 if __name__ == "__main__":

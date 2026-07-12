@@ -11,21 +11,6 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
-os.environ.setdefault("PADDLE_PDX_DISABLE_DEV_MODEL_WL", "true")
-os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "true")
-os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "modelscope")
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from localocr.gpu_probe import probe_gpu, format_probe
-from localocr.router import route_engine
-from localocr.engines import get_engine
-from localocr.outputs import write_outputs
-from localocr.pdf_utils import render_pdf_to_images
-from localocr.cli import _ocr_pdf_with_ocr_engine, _ocr_pdf_with_vl
-from localocr.gpu_broker import GpuBrokerLease
-
 SAMPLES = Path(__file__).resolve().parent / "samples"
 OUT = Path(__file__).resolve().parent / "outputs"
 TMP = Path(__file__).resolve().parent / "_pdf_pages"
@@ -58,11 +43,27 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.allow_heavy:
         parser.error("heavy GPU integration requires explicit --allow-heavy authorization")
-    OUT.mkdir(parents=True, exist_ok=True)
-    TMP.mkdir(parents=True, exist_ok=True)
-    lease = GpuBrokerLease("localocr-integration-test")
+
+    os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_DEV_MODEL_WL", "true")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "true")
+    os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "modelscope")
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+    # Acquire the shared GPU lease before importing Paddle or any model runtime.
+    from localocr.gpu_broker import GpuBrokerLease
+
+    lease = GpuBrokerLease("localocr")
     lease.__enter__()
     atexit.register(lease.__exit__, None, None, None)
+
+    from localocr.gpu_probe import probe_gpu, format_probe
+    from localocr.engines import get_engine
+    from localocr.outputs import write_outputs
+    from localocr.cli import _ocr_pdf_with_ocr_engine, _ocr_pdf_with_vl
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    TMP.mkdir(parents=True, exist_ok=True)
     report = ["# LocalOCR 测试报告\n", f"日期：{time.strftime('%Y-%m-%d %H:%M')}\n"]
     info = probe_gpu()
     report.append(f"\n## GPU 环境\n\n- {format_probe(info)}\n- 推理前显存：{gpu_mem()}\n")
