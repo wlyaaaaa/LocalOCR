@@ -1,6 +1,6 @@
-# Smart LocalOCR wrapper for Codex. It never waits forever on an OCR client call.
+﻿# Smart LocalOCR wrapper for Codex. It never waits forever on an OCR client call.
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
+    [Parameter(Position = 0)]
     [string]$Path,
 
     [ValidateSet("auto", "ocr", "vl", "structure")]
@@ -145,9 +145,13 @@ function Invoke-BoundedProcess {
             }
         }
 
+        $process.WaitForExit()
+        $process.Refresh()
+        $exitCode = [int]$process.ExitCode
+
         return [pscustomobject]@{
             timed_out = $false
-            exit_code = $process.ExitCode
+            exit_code = $exitCode
             stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
             stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
         }
@@ -217,7 +221,25 @@ function Select-JsonObjectText {
     return $Text.Substring($start, $end - $start + 1)
 }
 
-$route = Resolve-SmartRoutePreview -InputPath $Path -RequestedEngine $Engine -RequestedModel $Model
+if (-not $Path -and -not $TriageOnly) {
+    ConvertTo-CompactJson ([pscustomobject]@{
+        ok = $false
+        status = "missing_path"
+        recommendation = "supply_path_or_use_triage_only"
+    })
+    exit 0
+}
+
+if ($Path) {
+    $route = Resolve-SmartRoutePreview -InputPath $Path -RequestedEngine $Engine -RequestedModel $Model
+} else {
+    $route = [pscustomobject]@{
+        effective_engine = $null
+        reason = "not_applicable_without_path"
+        confidence = $null
+        signals = @()
+    }
+}
 $active = Get-LocalOcrActiveTasks
 $health = Get-LocalOcrHealthCompact -Port $Port -HostAddress $HostAddress
 
@@ -260,6 +282,7 @@ if ((@($active.tasks).Count -gt 0) -and (-not $Force)) {
 $ocrOnce = Join-Path $ScriptDir "ocr_once.ps1"
 $commandParts = @(
     "`$ErrorActionPreference = 'Stop'",
+    "`$ProgressPreference = 'SilentlyContinue'",
     "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $Engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
 )

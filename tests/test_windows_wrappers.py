@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -8,6 +11,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsWrapperTest(unittest.TestCase):
+    def _windows_script_path(self, path: Path) -> str:
+        if os.name == "nt":
+            return str(path)
+        return subprocess.run(
+            ["wslpath", "-w", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
     def test_start_server_uses_named_mutex(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
 
@@ -71,6 +84,63 @@ class WindowsWrapperTest(unittest.TestCase):
 
     def test_ocr_smart_wrapper_exists(self) -> None:
         self.assertTrue((ROOT / "ocr_smart.ps1").exists())
+
+    def test_ocr_smart_triage_does_not_require_path(self) -> None:
+        script_path = self._windows_script_path(ROOT / "ocr_smart.ps1")
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        completed = subprocess.run(
+            [
+                executable,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script_path,
+                "-TriageOnly",
+                "-Port",
+                "1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "triage_only")
+        self.assertEqual(payload["route_reason"], "not_applicable_without_path")
+
+    def test_ocr_smart_normal_mode_reports_missing_path_as_json(self) -> None:
+        script_path = self._windows_script_path(ROOT / "ocr_smart.ps1")
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        completed = subprocess.run(
+            [
+                executable,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script_path,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "missing_path")
+
+    def test_ocr_smart_finalizes_child_exit_state(self) -> None:
+        script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("$process.WaitForExit()", script)
+        self.assertIn("$process.Refresh()", script)
+        self.assertIn("$ProgressPreference = 'SilentlyContinue'", script)
 
     def test_ocr_smart_uses_smart_router_v2_preview(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
