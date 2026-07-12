@@ -177,8 +177,13 @@ wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 ## 测试
 
 ```bash
-scripts/run_in_wsl.sh tests/run_tests.py   # 跑4项测试，更新 TEST_REPORT.md
+scripts/run_in_wsl.sh tests/run_tests.py --allow-heavy
 ```
+
+`tests/run_tests.py` 是会依次加载 OCR、VL、Structure 模型并写入测试输出与
+`TEST_REPORT.md` 的重型 GPU 集成测试。它不是普通健康检查，只有用户明确授权本地
+重型集成测试时才可添加 `--allow-heavy`；默认稳定性检查使用 `/health`、单元测试和
+单样例 smoke。运行时会通过 LocalGpuBroker 与 Ollama、ChineseASR 排他。
 
 ## 故障
 

@@ -7,8 +7,9 @@ import signal
 import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .gpu_probe import format_probe, probe_gpu
 from .job_registry import JobClaim, JobRegistry
@@ -92,6 +93,7 @@ class OCRService:
         job_dir: str | Path | None = None,
         probe_on_start: bool = True,
         isolated_timeout_sec: int = 3600,
+        gpu_lease_factory: Callable[[str], Any] | None = None,
     ) -> None:
         self.device = device
         self.project_root = Path(__file__).resolve().parent.parent
@@ -103,6 +105,7 @@ class OCRService:
         self._engine_profiles: dict[str, ModelProfile] = {}
         self._lock = threading.RLock()
         self.gpu_info = probe_gpu() if probe_on_start else None
+        self._gpu_lease_factory = gpu_lease_factory or (lambda _owner: nullcontext())
 
     @property
     def gpu_summary(self) -> str | None:
@@ -221,65 +224,70 @@ class OCRService:
 
         output_dir = Path(out_dir) if out_dir is not None else Path("outputs/api")
         results: list[dict[str, Any]] = []
-        for file_path in files:
-            profile, route = select_model_profile_with_route(
-                file_path,
-                engine_choice=engine_choice,
-                model_choice=model_choice,
-            )
-            route_dict = route.to_dict()
-            claim: JobClaim | None = None
-            if write_files:
-                request = self.job_registry.build_request(file_path, profile, output_dir)
-                claim = self.job_registry.try_claim(request)
-                if claim.kind == "cache_hit":
-                    cached = dict(claim.response or {})
-                    cached.setdefault("route", route_dict)
-                    results.append(cached)
-                    continue
-                if claim.kind == "active":
-                    response = dict(claim.response or {})
-                    response.update(
-                        {
-                            "count": 0,
-                            "device": self.device,
-                            "gpu": self.gpu_summary,
-                            "loaded_engines": self.loaded_engines,
-                            "loaded_models": self.loaded_models,
-                            "route": route_dict,
-                            "results": [],
-                        }
-                    )
-                    return response
+        lease_acquired = False
+        with ExitStack() as lease_stack:
+            for file_path in files:
+                profile, route = select_model_profile_with_route(
+                    file_path,
+                    engine_choice=engine_choice,
+                    model_choice=model_choice,
+                )
+                route_dict = route.to_dict()
+                claim: JobClaim | None = None
+                if write_files:
+                    request = self.job_registry.build_request(file_path, profile, output_dir)
+                    claim = self.job_registry.try_claim(request)
+                    if claim.kind == "cache_hit":
+                        cached = dict(claim.response or {})
+                        cached.setdefault("route", route_dict)
+                        results.append(cached)
+                        continue
+                    if claim.kind == "active":
+                        response = dict(claim.response or {})
+                        response.update(
+                            {
+                                "count": 0,
+                                "device": self.device,
+                                "gpu": self.gpu_summary,
+                                "loaded_engines": self.loaded_engines,
+                                "loaded_models": self.loaded_models,
+                                "route": route_dict,
+                                "results": [],
+                            }
+                        )
+                        return response
 
-            try:
-                with self._lock:
-                    if profile.engine in HEAVY_ISOLATED_ENGINES:
-                        if write_files:
-                            result = self._process_heavy_isolated(file_path, output_dir, profile)
+                try:
+                    if not lease_acquired:
+                        lease_stack.enter_context(self._gpu_lease_factory("localocr"))
+                        lease_acquired = True
+                    with self._lock:
+                        if profile.engine in HEAVY_ISOLATED_ENGINES:
+                            if write_files:
+                                result = self._process_heavy_isolated(file_path, output_dir, profile)
+                            else:
+                                runtime_dir = self.project_root / "_server"
+                                runtime_dir.mkdir(parents=True, exist_ok=True)
+                                with tempfile.TemporaryDirectory(
+                                    prefix=f"localocr-{profile.engine}-", dir=runtime_dir
+                                ) as tmp:
+                                    result = self._process_heavy_isolated(file_path, Path(tmp), profile)
                         else:
-                            runtime_dir = self.project_root / "_server"
-                            runtime_dir.mkdir(parents=True, exist_ok=True)
-                            with tempfile.TemporaryDirectory(
-                                prefix=f"localocr-{profile.engine}-", dir=runtime_dir
-                            ) as tmp:
-                                result = self._process_heavy_isolated(file_path, Path(tmp), profile)
-                    else:
-                        result = self.process_file(file_path, profile.engine, profile.id)
-                    result["route"] = route_dict
-                    if write_files:
-                        paths = write_outputs(result, file_path, output_dir)
-                        result["output_files"] = {k: str(v) for k, v in paths.items()}
-                if claim is not None and claim.kind == "run":
-                    result = self.job_registry.complete(claim, result)
-                results.append(result)
-            except Exception as exc:
-                if claim is not None and claim.kind == "run":
-                    self.job_registry.fail(claim, exc)
-                raise
-            finally:
-                if claim is not None and claim.kind == "run":
-                    self.job_registry.release(claim)
+                            result = self.process_file(file_path, profile.engine, profile.id)
+                        result["route"] = route_dict
+                        if write_files:
+                            paths = write_outputs(result, file_path, output_dir)
+                            result["output_files"] = {k: str(v) for k, v in paths.items()}
+                    if claim is not None and claim.kind == "run":
+                        result = self.job_registry.complete(claim, result)
+                    results.append(result)
+                except Exception as exc:
+                    if claim is not None and claim.kind == "run":
+                        self.job_registry.fail(claim, exc)
+                    raise
+                finally:
+                    if claim is not None and claim.kind == "run":
+                        self.job_registry.release(claim)
         return {
             "ok": True,
             "count": len(results),

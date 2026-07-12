@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import sys
 import time
 from pathlib import Path
 
 from .gpu_probe import probe_gpu, format_probe, GPUProbeError
+from .gpu_broker import GpuBrokerLease
 from .router import collect_files, is_pdf
 from .model_registry import get_engine, select_model_profile
 from .outputs import write_outputs
@@ -98,6 +100,11 @@ def main() -> int:
         print("未找到可识别的文件(支持 png/jpg/jpeg/bmp/webp/tif/tiff/pdf)。", file=sys.stderr)
         return 1
     print(f"[收集] 共 {len(files)} 个文件待识别", flush=True)
+
+    if args.device.lower().startswith(("gpu", "cuda")):
+        lease = GpuBrokerLease("localocr-cli")
+        lease.__enter__()
+        atexit.register(lease.__exit__, None, None, None)
 
     out_dir = Path(args.out_dir)
     tmp_dir = Path(args.tmp_dir)

@@ -10,6 +10,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from .path_utils import to_wsl_path
+from .gpu_broker import GpuBrokerLease
 from .service import OCRService
 
 
@@ -40,7 +41,12 @@ _service: OCRService | None = None
 def get_service() -> OCRService:
     global _service
     if _service is None:
-        _service = OCRService(device="gpu:0", tmp_dir="_pdf_pages/api", probe_on_start=True)
+        _service = OCRService(
+            device="gpu:0",
+            tmp_dir="_pdf_pages/api",
+            probe_on_start=True,
+            gpu_lease_factory=lambda owner: GpuBrokerLease(owner),
+        )
     return _service
 
 
