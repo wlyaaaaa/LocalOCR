@@ -54,4 +54,4 @@
 
 - [x] **Step 1: Run the full lightweight unit suite and `git diff --check`.**
 - [x] **Step 2: Run zero-path triage once and confirm it does not create OCR outputs or load an engine.**
-- [ ] **Step 3: Scan the public diff for secrets, stage explicit files, commit, and push the feature branch.**
+- [x] **Step 3: Scan the public diff for secrets, stage explicit files, commit, and push the feature branch.**
