@@ -1,6 +1,6 @@
 # Release LocalOCR GPU/API resources before starting other heavy local workloads.
 param(
-    [int]$Port = 8765,
+    [int]$Port = 18665,
     [int]$WslTimeoutSec = 10
 )
 

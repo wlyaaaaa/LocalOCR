@@ -67,13 +67,13 @@ E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 健康检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8765/health
+Invoke-RestMethod http://127.0.0.1:18665/health
 ```
 
 查询某个任务：
 
 ```powershell
-Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
+Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>"
 ```
 
 底层 wrapper 仍可直接识别一个路径：

@@ -1,6 +1,6 @@
 # LocalOCR local API server launcher.
 param(
-    [int]$Port = 8765,
+    [int]$Port = 18665,
     [string]$HostAddress = "127.0.0.1",
     [int]$StartupTimeoutSec = 600
 )
@@ -69,6 +69,21 @@ function Get-LocalOcrProcess {
         return $process
     } catch {
         return $null
+    }
+}
+
+function Assert-LocalOcrPortBindable {
+    $listener = $null
+    try {
+        $ipAddress = [System.Net.IPAddress]::Parse($HostAddress)
+        $listener = [System.Net.Sockets.TcpListener]::new($ipAddress, $Port)
+        $listener.Start()
+    } catch {
+        throw "[LocalOCR] Cannot bind ${HostAddress}:$Port before WSL startup. Check Windows excluded port ranges and current listeners. $($_.Exception.Message)"
+    } finally {
+        if ($null -ne $listener) {
+            $listener.Stop()
+        }
     }
 }
 
@@ -146,6 +161,8 @@ try {
         Write-LocalOcrStartupDiagnostics -Message "[LocalOCR] Server did not become ready before ${StartupTimeoutSec}s timeout."
         throw "LocalOCR API startup timed out while existing process is still running."
     }
+
+    Assert-LocalOcrPortBindable
 
     Write-Host "[LocalOCR] Starting API server at http://${HostAddress}:$Port ..." -ForegroundColor Cyan
     Write-Host "[LocalOCR] Log: $LogPath" -ForegroundColor DarkGray

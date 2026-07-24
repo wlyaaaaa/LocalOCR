@@ -70,7 +70,7 @@ Windows (E:\Projects\Tools\LocalOCR)                WSL2 Ubuntu 24.04
 ## 本地 API
 
 `start_server.ps1` 通过 Windows `Start-Process` 启动隐藏的 `wsl.exe` 会话，并在
-其中以前台进程运行 `python -m localocr.server`，默认只监听 `127.0.0.1:8765`。
+其中以前台进程运行 `python -m localocr.server`，默认只监听 `127.0.0.1:18665`。
 服务启动时执行 GPU 探针；PP-OCR 图片请求在 API 进程内加载并复用模型实例。
 PaddleOCR-VL 和 PP-StructureV3 请求通过隔离子进程执行，避免重模型与 Uvicorn
 生命周期、信号处理或显存释放互相影响。Windows 侧启动进程 PID 记录在

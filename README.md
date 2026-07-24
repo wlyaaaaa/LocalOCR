@@ -70,7 +70,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 - `cache_status=cache_hit` 是成功复用已有输出，不是失败；直接读 `results[].output_files`。
 - `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
 - `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
-- `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`8766` 属于 ChineseASR，不是 LocalOCR 的回退端口。
+- `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`18666` 属于 ChineseASR，不是 LocalOCR 的回退端口。
 - Word / PPT / Excel / 数字 PDF 不应先丢给 OCR；先用原生文档/PDF解析，只有扫描件、截图、拍照页、嵌入图片文字才用 LocalOCR。
 
 ## 快速开始
@@ -119,7 +119,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # 只做轻量预检，不提交 OCR 任务
 .\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -TriageOnly
 
-# 启动本机 API，只监听 127.0.0.1:8765
+# 启动本机 API，只监听 127.0.0.1:18665
 .\start_server.ps1
 
 # 通过 API 调一次 OCR；如果服务未启动，会自动拉起
@@ -135,7 +135,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 .\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
 
 # 查询某个 job_key 的状态或缓存可用性
-Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
+Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>"
 
 # 首次冷启动服务较慢时，可单独放宽服务启动等待时间
 .\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
@@ -152,10 +152,10 @@ Invoke-RestMethod "http://127.0.0.1:8765/jobs/<job_key>"
 
 HTTP 入口：
 
-- `GET http://127.0.0.1:8765/health`
-- `GET http://127.0.0.1:8765/jobs/<job_key>`
-- `POST http://127.0.0.1:8765/ocr/path`
-- `POST http://127.0.0.1:8765/ocr/file`
+- `GET http://127.0.0.1:18665/health`
+- `GET http://127.0.0.1:18665/jobs/<job_key>`
+- `POST http://127.0.0.1:18665/ocr/path`
+- `POST http://127.0.0.1:18665/ocr/file`
 
 说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=auto` 会先经过
 Smart Router v2；`results[].route` 会解释最终选择。`engine=vl` / `engine=structure`

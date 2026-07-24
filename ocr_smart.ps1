@@ -9,7 +9,7 @@ param(
 
     [switch]$Recursive,
     [string]$OutDir,
-    [int]$Port = 8765,
+    [int]$Port = 18665,
     [string]$HostAddress = "127.0.0.1",
     [int]$TimeoutSec = 3600,
     [int]$StartupTimeoutSec = 600,

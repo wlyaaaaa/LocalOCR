@@ -51,6 +51,13 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("non-LocalOCR service", script)
         self.assertIn("Use -Port", script)
 
+    def test_start_server_fails_fast_when_windows_cannot_bind_port(self) -> None:
+        script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Assert-LocalOcrPortBindable", script)
+        self.assertIn("TcpListener", script)
+        self.assertIn("excluded port ranges", script)
+
     def test_stop_server_cleans_api_vl_children_and_pid_file(self) -> None:
         script = (ROOT / "stop_server.ps1").read_text(encoding="utf-8")
 
