@@ -116,6 +116,7 @@ class JobRegistry:
         stored["job_id"] = claim.request.job_id
         stored["job_key"] = claim.request.job_key
         stored["cache_status"] = "stored"
+        started_at = _claim_started_at(claim)
         self._write_manifest(
             claim.manifest_path,
             {
@@ -129,6 +130,7 @@ class JobRegistry:
                 "engine": claim.request.engine,
                 "model_id": claim.request.profile_id,
                 "output_dir": str(claim.request.output_dir),
+                "started_at": started_at,
                 "updated_at": _now_iso(),
                 "output_files": stored.get("output_files") or {},
                 "result": stored,
@@ -137,6 +139,7 @@ class JobRegistry:
         return stored
 
     def fail(self, claim: JobClaim, exc: BaseException) -> None:
+        started_at = _claim_started_at(claim)
         self._write_manifest(
             claim.manifest_path,
             {
@@ -150,6 +153,7 @@ class JobRegistry:
                 "engine": claim.request.engine,
                 "model_id": claim.request.profile_id,
                 "output_dir": str(claim.request.output_dir),
+                "started_at": started_at,
                 "updated_at": _now_iso(),
                 "error_tail": f"{type(exc).__name__}: {exc}"[-2000:],
             },
@@ -253,6 +257,11 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def _claim_started_at(claim: JobClaim) -> str | None:
+    value = _read_json(claim.manifest_path).get("started_at")
+    return value if isinstance(value, str) and value else None
 
 
 def _output_files_exist(output_files: dict[str, Any]) -> bool:

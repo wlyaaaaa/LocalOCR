@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .path_utils import to_wsl_path
 from .gpu_broker import GpuBrokerLease
+from .observer import ObserverProjection
 from .service import OCRService
 
 
@@ -64,6 +65,26 @@ def health() -> dict:
 @app.get("/jobs/{job_key}")
 def job_status(job_key: str) -> dict:
     return get_service().job_registry.read_status(job_key)
+
+
+def get_observer_projection() -> ObserverProjection:
+    if _service is not None:
+        return ObserverProjection(_service.job_registry.job_dir)
+    project_root = Path(__file__).resolve().parent.parent
+    return ObserverProjection(project_root / "_server" / "jobs")
+
+
+@app.get("/observer/jobs")
+def observer_jobs(limit: int = 100) -> dict:
+    return get_observer_projection().list_jobs(limit=limit)
+
+
+@app.get("/observer/jobs/{job_id}")
+def observer_job(job_id: str) -> dict:
+    projected = get_observer_projection().get_job(job_id)
+    if projected is None:
+        raise HTTPException(status_code=404, detail="observer_job_not_found")
+    return projected
 
 
 @app.post("/ocr/path")
