@@ -19,7 +19,7 @@
 在 Windows PowerShell：
 
 ```powershell
-# Smart Router v2 自动分流（图片/普通扫描 PDF→OCR，复杂表格/公式/多栏 PDF→VL）
+# 单次 CLI 预路由（图片/普通扫描 PDF→OCR，复杂表格/公式/多栏 PDF→VL）
 .\start.ps1 "E:\某文件夹"
 .\start.ps1 "E:\某图片.png"
 .\start.ps1 "E:\某文档.pdf"
@@ -52,8 +52,9 @@ E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -OuterT
 ```
 
 `ocr_smart.ps1` 会先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`，再决定是否提交任务。
-真正的 `auto` 分流由 API Smart Router v2 执行：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
-默认走 `ocr`；文件名提示 `table/formula/layout/multi/论文/公式/表格/多栏/课件` 等复杂材料时走 `vl`。
+真正的 `auto` 分流由 API Smart Router v3 执行：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
+先走 `ocr`；空文本或明显低置信结果自动升级到本地 `vl`。文件名提示
+`table/formula/layout/multi/论文/公式/表格/多栏/课件` 等复杂材料时直接走 `vl`。
 复杂版面、表格、公式、多栏材料也可以显式传 `-Engine vl`。
 需要表格 HTML、版面块、公式、印章和区域坐标时显式传 `-Engine structure`。
 如果用户指定具体模型，用 `-Model <profile-id>`；显式模型始终优先，不会被 Smart Router 改写。
@@ -129,12 +130,13 @@ API 请求体：
 }
 ```
 
-API 写盘任务会按源文件路径、文件内容、模型 profile 和输出目录生成 `job_key`。首次完成时结果里会出现
+API 写盘任务会按源文件路径、文件内容、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`。首次完成时结果里会出现
 `cache_status=stored`；同一任务再次提交且输出文件仍在时返回 `cache_status=cache_hit`，不会重新加载模型或重复 OCR。
 如果同一任务正在运行，API 会返回 `status=active_localocr_task`、`job_key` 和
 `recommendation=do_not_blindly_retry`；此时先查 `/jobs/<job_key>`、输出目录或后台进程，不要马上再提交一次。
 每个结果还包含 `results[].route`，其中 `effective_engine` 是最终引擎，`reason` 是路由原因，
-`signals` 是命中的低成本信号，`confidence` 是规则置信度。
+`signals` 是命中的信号，`confidence` 是规则置信度。auto 首轮 OCR 还包含 `difficulty` 和
+`escalated`；发生升级时 `escalation` 会记录原模型与最终 VL 模型。
 
 ## 路由规则（auto 模式）
 
@@ -143,6 +145,7 @@ API 写盘任务会按源文件路径、文件内容、模型 profile 和输出�
 | 图片（png/jpg/webp/bmp/tif） | PP-OCRv6_medium |
 | 普通扫描 PDF / 表单 / 纯文字 PDF | PP-OCRv6_medium |
 | 文件名提示表格、公式、多栏、论文、课件等复杂 PDF | PaddleOCR-VL-1.6 |
+| auto 首轮 OCR 空文本或明显低置信 | 本地升级到 PaddleOCR-VL-1.6 |
 | 文件夹 | 按每个文件类型分别路由 |
 
 `--engine` / `-Engine` 决定路由族；`--model` / `-Model` 决定具体 profile。未指定 `model`

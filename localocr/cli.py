@@ -84,6 +84,11 @@ def main() -> int:
     parser.add_argument("--device", default="gpu:0", help="设备(默认 gpu:0)。")
     parser.add_argument("--tmp-dir", default="_pdf_pages", help="PDF 转图临时目录。")
     parser.add_argument("--no-gpu-probe", action="store_true", help="跳过启动GPU探针(不建议)。")
+    parser.add_argument(
+        "--broker-lease-held-by-parent",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
 
     if not args.no_gpu_probe:
@@ -101,7 +106,7 @@ def main() -> int:
         return 1
     print(f"[收集] 共 {len(files)} 个文件待识别", flush=True)
 
-    if args.device.lower().startswith(("gpu", "cuda")):
+    if args.device.lower().startswith(("gpu", "cuda")) and not args.broker_lease_held_by_parent:
         lease = GpuBrokerLease("localocr-cli")
         lease.__enter__()
         atexit.register(lease.__exit__, None, None, None)

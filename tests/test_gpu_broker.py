@@ -71,7 +71,19 @@ class OCRServiceLeaseTests(unittest.TestCase):
 
             def fake_process(*_args, **_kwargs):
                 events.append("inference")
-                return {"pages": []}
+                return {
+                    "pages": [
+                        {
+                            "blocks": [
+                                {
+                                    "type": "text",
+                                    "text": "fake",
+                                    "score": 0.99,
+                                }
+                            ]
+                        }
+                    ]
+                }
 
             with patch("localocr.service.select_model_profile_with_route", return_value=(profile, route)):
                 with patch.object(service, "process_file", side_effect=fake_process):

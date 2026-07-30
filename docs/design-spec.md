@@ -46,7 +46,8 @@ E:\Projects\Tools\LocalOCR\                         (源码放 Windows 端，便
 │  ├─ __init__.py
 │  ├─ gpu_probe.py      # GPU 强制探针，失败即退出
 │  ├─ router.py         # 扩展名判断与输入收集
-│  ├─ smart_router.py   # Smart Router v2：可解释 auto 分流
+│  ├─ smart_router.py   # Smart Router v3：可解释 auto 预路由
+│  ├─ difficulty.py     # OCR 结果级困难判定与本地 VL 升级信号
 │  ├─ engines/
 │  │  ├─ ppocrv6.py     # PaddleOCR(ocr_version="PP-OCRv6", lang="ch", 方向检测/矫正/旋转全开)
 │  │  ├─ vl.py          # PaddleOCRVL(pipeline_version="v1.6", vl_rec_backend="native")
@@ -75,12 +76,12 @@ E:\Projects\Tools\LocalOCR\                         (源码放 Windows 端，便
 └─ pyproject.toml       # 依赖钉版本
 ```
 
-## 4. 路由规则（Smart Router v2）
+## 4. 路由规则（Smart Router v3）
 
-| 输入类型 | 默认引擎 | 判定依据 |
+| 输入类型 | 首轮引擎 | 判定依据 |
 |---|---|---|
 | 单张图片（png/jpg/webp/bmp/tif） | PP-OCRv6_medium | 扩展名 |
-| 截图 / 聊天记录 / 网页图 / 纯文字扫描件 | PP-OCRv6_medium | 图片类一律走 OCR |
+| 截图 / 聊天记录 / 网页图 / 纯文字扫描件 | PP-OCRv6_medium | 图片类先走 OCR，结果困难时本地升级 VL |
 | 普通扫描 PDF / 表单 / 纯文字 PDF | PP-OCRv6_medium | `.pdf` 且无复杂版面关键词 |
 | 表格/公式/多栏/论文/课件等复杂 PDF | PaddleOCR-VL-1.6 | 文件名含 `table/formula/layout/multi/论文/公式/表格/多栏/课件` 等低成本信号 |
 | 文件夹 | 按其中每个文件类型分别路由 | 递归 |
@@ -94,6 +95,12 @@ E:\Projects\Tools\LocalOCR\                         (源码放 Windows 端，便
 普通扫描 PDF 和法律/地址确认等表单默认走 OCR，避免 Codex 外层超时和不必要的重模型加载。
 复杂版面仍可由低成本信号自动进入 VL，也可由用户显式 `--engine vl` 指定。
 每个 API 结果返回 `route.effective_engine`、`route.reason`、`route.signals` 和 `route.confidence` 便于审计。
+
+2026-07-29 调整：API Smart Router 升级为 v3。`auto` 首轮选中 PP-OCRv6 时，服务会在写盘前评估
+空文本、平均置信度、低于 0.80 的文本块占比和低于 0.50 的文本块占比；明显困难时在同一 GPU
+租约内使用隔离子进程重跑 PaddleOCR-VL-1.6，并只写最终结果。显式 engine/model 不参与该升级，
+`structure` 仍保持显式选择。路由 JSON 额外记录 `difficulty`、`initial_engine`、`escalated`
+和 `escalation`；job cache 把请求语义与路由策略纳入键，避免 auto 与显式 OCR 交叉命中。
 
 ## 5. 引擎配置
 

@@ -47,6 +47,20 @@ class JobRegistryTest(unittest.TestCase):
             different_output = registry.build_request(source, fake_profile(), root / "other-out")
             self.assertNotEqual(changed.job_key, different_output.job_key)
 
+            auto = registry.build_request(
+                source,
+                fake_profile(),
+                output_dir,
+                request_variant="engine=auto;policy=smart-router-v3",
+            )
+            explicit = registry.build_request(
+                source,
+                fake_profile(),
+                output_dir,
+                request_variant="engine=ocr",
+            )
+            self.assertNotEqual(auto.job_key, explicit.job_key)
+
     def test_completed_job_returns_cache_hit_when_outputs_exist(self) -> None:
         from localocr.job_registry import JobRegistry
 

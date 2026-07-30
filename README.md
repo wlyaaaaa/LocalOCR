@@ -8,14 +8,14 @@
 - **中文优先**：默认 PP-OCRv6_medium 检测+识别，方向检测 / 文档矫正 / 文本行旋转纠正全开。
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
-- **Smart Router v2 自动分流**：图片 → PP-OCRv6_medium；普通扫描 PDF / 表单 → OCR；文件名提示表格、公式、多栏、论文、课件等复杂版面 → VL；每次结果返回 `route.reason` / `route.signals` / `route.confidence`。
+- **Smart Router v3 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
 - **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
-- **任务级缓存/去重**：API 会按源文件、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
+- **任务级缓存/去重**：API 会按源文件、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
 - **Codex 防卡入口**：`ocr_smart.ps1` 先做轻量分流和后台任务探测，再用外层超时包住 `ocr_once.ps1`，避免 PowerShell 长时间占住 AI 回合。
 
 ## 环境
@@ -41,7 +41,7 @@
 
 默认决策：
 
-- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v2 默认走 OCR。
+- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v3 先走 OCR；空文本或明显低置信时自动在同一任务内升级到本地 VL。
 - 复杂表格、公式、多栏、论文、课件、整页复杂版面：显式 `-Engine vl`，或让带复杂文件名信号的 PDF 由 `auto` 路由到 VL。
 - 需要表格 HTML、版面块、公式、印章、区域检测、坐标：显式 `-Engine structure`。
 - 需要指定或替换具体模型：用 `-Model <profile-id>` / `--model <profile-id>`，并先改 `localocr/model_profiles.json`，不要把模型名硬编码进 wrapper 或服务层。
@@ -113,7 +113,7 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 **方式 C — 常驻本地 API（推荐给 AI 助手/高频 OCR）**：
 
 ```powershell
-# Codex / AI 助手默认入口：外层最多等待 120 秒，实际 OCR/VL 由 API Smart Router v2 决定
+# Codex / AI 助手默认入口：外层最多等待 120 秒，实际 OCR/VL 由 API Smart Router v3 决定
 .\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
 
 # 只做轻量预检，不提交 OCR 任务
@@ -158,7 +158,7 @@ HTTP 入口：
 - `POST http://127.0.0.1:18665/ocr/file`
 
 说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=auto` 会先经过
-Smart Router v2；`results[].route` 会解释最终选择。`engine=vl` / `engine=structure`
+Smart Router v3；`results[].route` 会解释首轮选择、难度评估和最终引擎。`engine=vl` / `engine=structure`
 会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
 新字段 `loaded_models` 返回 API 进程内已加载的具体 profile id。
 
@@ -177,8 +177,9 @@ Smart Router v2；`results[].route` 会解释最终选择。`engine=vl` / `engin
 `ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
 `results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。最终路由看
 `results[].route.effective_engine`、`results[].route.reason`、`results[].route.signals` 和
-`results[].route.confidence`；`smart.preview_*` 只是 PowerShell 预检预测。API 还会给每个写盘任务返回
-`job_key` / `job_id` / `cache_status`；同一源文件、模型 profile 和输出目录再次提交时，若输出文件仍存在，会直接返回
+`results[].route.confidence`；自动首轮 OCR 还会返回 `route.initial_engine`、`route.escalated` 和
+`route.difficulty`。`smart.preview_*` 只是 PowerShell 预检预测。API 还会给每个写盘任务返回
+`job_key` / `job_id` / `cache_status`；同一源文件、同一请求语义与路由策略、同一输出目录再次提交时，若输出文件仍存在，会直接返回
 `cache_status=cache_hit`。若任务正在运行，API 返回 `status=active_localocr_task` 和 `recommendation=do_not_blindly_retry`，
 不要盲目重复提交；可用 `GET /jobs/<job_key>` 查询状态。
 若外层等待超时或发现已有重 OCR 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
@@ -197,7 +198,8 @@ localocr/        源码
   model_registry.py / model_profiles.json
                  模型 profile 注册表；把模型选择与推理实现解耦
   router.py      扩展名和文件收集基础工具
-  smart_router.py Smart Router v2，可解释 auto 路由策略
+  smart_router.py Smart Router v3 的低成本预路由
+  difficulty.py  OCR 结果级困难判定；仅 auto 首轮 OCR 可触发本地 VL 升级
   engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
   job_registry.py 文件型任务缓存、去重和 job 状态 manifest
   outputs.py     TXT/MD/JSON 输出

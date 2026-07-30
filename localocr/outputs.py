@@ -92,6 +92,7 @@ def _to_json(result: dict, file_path: Path) -> str:
         "page_angle": result.get("page_angle"),
         "page_width": result.get("page_width"),
         "page_height": result.get("page_height"),
+        "route": result.get("route"),
         "pages": result.get("pages", []),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

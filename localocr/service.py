@@ -11,15 +11,24 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
+from .difficulty import POLICY_VERSION as DIFFICULTY_POLICY_VERSION
+from .difficulty import OCRDifficultyAssessment, assess_ocr_difficulty
 from .gpu_probe import format_probe, probe_gpu
 from .job_registry import JobClaim, JobRegistry
-from .model_registry import ModelProfile, get_engine, select_model_profile, select_model_profile_with_route
+from .model_registry import (
+    ModelProfile,
+    get_engine,
+    resolve_model_reference,
+    select_model_profile,
+    select_model_profile_with_route,
+)
 from .outputs import safe_output_stem, write_outputs
 from .pdf_utils import render_pdf_to_files
 from .router import collect_files, is_pdf
 
 
 HEAVY_ISOLATED_ENGINES = {"vl", "structure"}
+AUTO_ROUTING_POLICY_VERSION = f"smart-router-v3:{DIFFICULTY_POLICY_VERSION}"
 
 
 def run_isolated_command(
@@ -105,6 +114,7 @@ class OCRService:
         self._engine_profiles: dict[str, ModelProfile] = {}
         self._lock = threading.RLock()
         self.gpu_info = probe_gpu() if probe_on_start else None
+        self._parent_manages_gpu_lease = gpu_lease_factory is not None
         self._gpu_lease_factory = gpu_lease_factory or (lambda _owner: nullcontext())
 
     @property
@@ -148,6 +158,8 @@ class OCRService:
             "--tmp-dir",
             str(tmp_dir),
         ]
+        if self._parent_manages_gpu_lease:
+            cmd.append("--broker-lease-held-by-parent")
         completed = run_isolated_command(
             cmd,
             cwd=self.project_root,
@@ -208,6 +220,24 @@ class OCRService:
         profile = select_model_profile(path, engine_choice=engine_choice, model_choice=model_choice)
         return self._process_file_with_profile(path, profile)
 
+    def _process_selected_profile(
+        self,
+        file_path: Path,
+        output_dir: Path,
+        profile: ModelProfile,
+        *,
+        write_files: bool,
+    ) -> dict[str, Any]:
+        if profile.engine not in HEAVY_ISOLATED_ENGINES:
+            return self.process_file(file_path, profile.engine, profile.id)
+        if write_files:
+            return self._process_heavy_isolated(file_path, output_dir, profile)
+
+        runtime_dir = self.project_root / "_server"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f"localocr-{profile.engine}-", dir=runtime_dir) as tmp:
+            return self._process_heavy_isolated(file_path, Path(tmp), profile)
+
     def process_inputs(
         self,
         inputs: list[str | Path],
@@ -235,7 +265,12 @@ class OCRService:
                 route_dict = route.to_dict()
                 claim: JobClaim | None = None
                 if write_files:
-                    request = self.job_registry.build_request(file_path, profile, output_dir)
+                    request = self.job_registry.build_request(
+                        file_path,
+                        profile,
+                        output_dir,
+                        request_variant=_request_variant(engine_choice, model_choice),
+                    )
                     claim = self.job_registry.try_claim(request)
                     if claim.kind == "cache_hit":
                         cached = dict(claim.response or {})
@@ -262,18 +297,25 @@ class OCRService:
                         lease_stack.enter_context(self._gpu_lease_factory("localocr"))
                         lease_acquired = True
                     with self._lock:
-                        if profile.engine in HEAVY_ISOLATED_ENGINES:
-                            if write_files:
-                                result = self._process_heavy_isolated(file_path, output_dir, profile)
+                        result = self._process_selected_profile(
+                            file_path,
+                            output_dir,
+                            profile,
+                            write_files=write_files,
+                        )
+                        if _should_assess_auto_ocr(engine_choice, model_choice, profile):
+                            assessment = assess_ocr_difficulty(result)
+                            if assessment.should_escalate:
+                                vl_profile = resolve_model_reference("vl")
+                                result = self._process_selected_profile(
+                                    file_path,
+                                    output_dir,
+                                    vl_profile,
+                                    write_files=write_files,
+                                )
+                                route_dict = _escalated_route(route_dict, assessment, vl_profile)
                             else:
-                                runtime_dir = self.project_root / "_server"
-                                runtime_dir.mkdir(parents=True, exist_ok=True)
-                                with tempfile.TemporaryDirectory(
-                                    prefix=f"localocr-{profile.engine}-", dir=runtime_dir
-                                ) as tmp:
-                                    result = self._process_heavy_isolated(file_path, Path(tmp), profile)
-                        else:
-                            result = self.process_file(file_path, profile.engine, profile.id)
+                                route_dict = _assessed_route(route_dict, assessment)
                         result["route"] = route_dict
                         if write_files:
                             paths = write_outputs(result, file_path, output_dir)
@@ -297,3 +339,58 @@ class OCRService:
             "loaded_models": self.loaded_models,
             "results": results,
         }
+
+
+def _request_variant(engine_choice: str, model_choice: str | None) -> str:
+    model = model_choice or "<default>"
+    if engine_choice == "auto" and model_choice is None:
+        return f"engine=auto;model={model};policy={AUTO_ROUTING_POLICY_VERSION}"
+    return f"engine={engine_choice};model={model}"
+
+
+def _should_assess_auto_ocr(
+    engine_choice: str,
+    model_choice: str | None,
+    profile: ModelProfile,
+) -> bool:
+    return engine_choice == "auto" and model_choice is None and profile.engine == "ocr"
+
+
+def _assessed_route(
+    route: dict[str, Any],
+    assessment: OCRDifficultyAssessment,
+) -> dict[str, Any]:
+    assessed = dict(route)
+    assessed["initial_engine"] = route.get("effective_engine")
+    assessed["escalated"] = False
+    assessed["difficulty"] = assessment.to_dict()
+    return assessed
+
+
+def _escalated_route(
+    route: dict[str, Any],
+    assessment: OCRDifficultyAssessment,
+    target_profile: ModelProfile,
+) -> dict[str, Any]:
+    escalated = _assessed_route(route, assessment)
+    from_engine = str(route.get("effective_engine") or "ocr")
+    from_model_id = route.get("model_id")
+    escalated.update(
+        {
+            "effective_engine": target_profile.engine,
+            "reason": "ocr_result_difficulty_prefers_vl",
+            "route_reason": "ocr_result_difficulty_prefers_vl",
+            "confidence": 0.9,
+            "signals": list(route.get("signals") or [])
+            + [f"ocr_difficulty:{reason}" for reason in assessment.reasons],
+            "model_id": target_profile.id,
+            "escalated": True,
+            "escalation": {
+                "from_engine": from_engine,
+                "from_model_id": from_model_id,
+                "to_engine": target_profile.engine,
+                "to_model_id": target_profile.id,
+            },
+        }
+    )
+    return escalated

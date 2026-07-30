@@ -11,7 +11,7 @@ from typing import Any
 from .model_registry import ModelProfile
 
 SCHEMA_VERSION = 1
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class JobRequest:
     profile_id: str
     engine: str
     output_dir: Path
+    request_variant: str = ""
 
 
 @dataclass
@@ -43,7 +44,14 @@ class JobRegistry:
         self.job_dir = Path(job_dir)
         self.stale_after_sec = stale_after_sec
 
-    def build_request(self, source_path: str | Path, profile: ModelProfile, output_dir: str | Path) -> JobRequest:
+    def build_request(
+        self,
+        source_path: str | Path,
+        profile: ModelProfile,
+        output_dir: str | Path,
+        *,
+        request_variant: str = "",
+    ) -> JobRequest:
         source = Path(source_path)
         stat = source.stat()
         source_hash = _file_sha256(source)
@@ -53,6 +61,7 @@ class JobRegistry:
             "engine": profile.engine,
             "output_dir": _norm_path(output),
             "profile_id": profile.id,
+            "request_variant": request_variant,
             "source_path": _norm_path(source),
             "source_sha256": source_hash,
             "source_size": stat.st_size,
@@ -67,6 +76,7 @@ class JobRegistry:
             profile_id=profile.id,
             engine=profile.engine,
             output_dir=output,
+            request_variant=request_variant,
         )
 
     def try_claim(self, request: JobRequest) -> JobClaim:
@@ -103,6 +113,7 @@ class JobRegistry:
                 "source_sha256": request.source_sha256,
                 "engine": request.engine,
                 "model_id": request.profile_id,
+                "request_variant": request.request_variant,
                 "output_dir": str(request.output_dir),
                 "started_at": _now_iso(),
                 "updated_at": _now_iso(),
@@ -127,8 +138,9 @@ class JobRegistry:
                 "source_path": str(claim.request.source_path),
                 "source_size": claim.request.source_size,
                 "source_sha256": claim.request.source_sha256,
-                "engine": claim.request.engine,
-                "model_id": claim.request.profile_id,
+                "engine": stored.get("engine_key") or claim.request.engine,
+                "model_id": stored.get("model_id") or claim.request.profile_id,
+                "request_variant": claim.request.request_variant,
                 "output_dir": str(claim.request.output_dir),
                 "started_at": started_at,
                 "updated_at": _now_iso(),
@@ -152,6 +164,7 @@ class JobRegistry:
                 "source_sha256": claim.request.source_sha256,
                 "engine": claim.request.engine,
                 "model_id": claim.request.profile_id,
+                "request_variant": claim.request.request_variant,
                 "output_dir": str(claim.request.output_dir),
                 "started_at": started_at,
                 "updated_at": _now_iso(),
