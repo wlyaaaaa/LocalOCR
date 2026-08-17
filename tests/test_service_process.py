@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from subprocess import TimeoutExpired
+from subprocess import CompletedProcess, TimeoutExpired
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from localocr.model_registry import select_model_profile
@@ -86,6 +88,45 @@ class FakeDifficultyEscalationService(OCRService):
                     "blocks": [{"type": "text", "text": "recovered", "score": None, "order": 0}],
                 }
             ],
+        }
+
+
+class FakeEmptyResultService(OCRService):
+    def __init__(self, *, tmp_dir: Path, job_dir: Path) -> None:
+        super().__init__(device="gpu:0", tmp_dir=tmp_dir, job_dir=job_dir, probe_on_start=False)
+        self.vl_calls = 0
+
+    def process_file(
+        self,
+        path: Path,
+        engine_choice: str = "auto",
+        model_choice: str | None = None,
+    ) -> dict:
+        return {
+            "engine": "Fake OCR",
+            "engine_key": "ocr",
+            "model": "Fake OCR",
+            "model_id": "ppocrv6-medium",
+            "device": self.device,
+            "pages": [{"page_index": 0, "blocks": []}],
+        }
+
+    def _process_heavy_isolated(
+        self,
+        path: Path,
+        output_dir: Path,
+        profile,
+        *,
+        request_hash: str | None = None,
+    ) -> dict:
+        self.vl_calls += 1
+        return {
+            "engine": "Fake VL",
+            "engine_key": "vl",
+            "model": "Fake VL",
+            "model_id": "paddleocr-vl-1.6",
+            "device": self.device,
+            "pages": [{"page_index": 0, "blocks": []}],
         }
 
 
@@ -173,6 +214,24 @@ class IsolatedProcessTest(unittest.TestCase):
             self.assertEqual(service.ocr_calls, 1)
             self.assertEqual(service.vl_calls, 0)
 
+    def test_auto_empty_ocr_and_vl_outputs_remain_indeterminate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = Path(__file__).resolve().parent / "samples" / "probe_text.png"
+            service = FakeEmptyResultService(tmp_dir=root / "tmp", job_dir=root / "jobs")
+
+            first = service.process_inputs([source], engine_choice="auto", out_dir=root / "out")
+            second = service.process_inputs([source], engine_choice="auto", out_dir=root / "out")
+
+            result = first["results"][0]
+            self.assertEqual(result["objective_outcome"], "indeterminate")
+            self.assertEqual(result["execution_status"], "completed")
+            self.assertTrue(result["route"]["escalated"])
+            self.assertEqual(result["route"]["effective_engine"], "vl")
+            self.assertEqual(first["results"][0]["cache_status"], "stored")
+            self.assertEqual(second["results"][0]["cache_status"], "cache_hit")
+            self.assertEqual(service.vl_calls, 1)
+
     def test_service_returns_active_job_without_running_duplicate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -226,6 +285,27 @@ class IsolatedProcessTest(unittest.TestCase):
             again = service.process_inputs([first_source], engine_choice="ocr", out_dir=root / "out")
             self.assertEqual(again["results"][0]["cache_status"], "stored")
 
+    def test_modern_cache_requires_complete_nonempty_artifact_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "sample.png"
+            source.write_bytes(b"image bytes")
+            service = FakeCacheService(tmp_dir=root / "tmp", job_dir=root / "jobs")
+
+            first = service.process_inputs([source], engine_choice="ocr", out_dir=root / "out")
+            job_key = first["results"][0]["job_key"]
+            manifest_path = root / "jobs" / f"{job_key}.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("output_file_sha256", None)
+            manifest.pop("output_file_size_bytes", None)
+            manifest["result"].pop("output_file_sha256", None)
+            manifest["result"].pop("output_file_size_bytes", None)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            again = service.process_inputs([source], engine_choice="ocr", out_dir=root / "out")
+            self.assertEqual(again["results"][0]["cache_status"], "stored")
+            self.assertEqual(service.calls, 2)
+
     def test_service_treats_structure_as_isolated_heavy_engine(self) -> None:
         service_source = (Path(__file__).resolve().parent.parent / "localocr" / "service.py").read_text(
             encoding="utf-8"
@@ -241,6 +321,40 @@ class IsolatedProcessTest(unittest.TestCase):
         self.assertIn("_process_selected_profile", service_source)
         self.assertIn("--broker-lease-held-by-parent", service_source)
         self.assertIn("broker_lease_held_by_parent", cli_source)
+
+    def test_heavy_child_reads_request_isolated_json_for_same_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "incoming" / "same.png"
+            source.parent.mkdir()
+            source.write_bytes(b"image bytes")
+            output_dir = root / "out"
+            request_hash = "a" * 64
+            profile = select_model_profile(source, engine_choice="vl")
+            canonical_json = output_dir / f"same.{request_hash[:32]}.json"
+            legacy_json = output_dir / "same.json"
+            output_dir.mkdir()
+            canonical_json.write_text(json.dumps({"marker": "canonical"}), encoding="utf-8")
+            legacy_json.write_text(json.dumps({"marker": "legacy"}), encoding="utf-8")
+            service = OCRService(
+                device="gpu:0",
+                tmp_dir=root / "tmp",
+                job_dir=root / "jobs",
+                probe_on_start=False,
+            )
+
+            with patch(
+                "localocr.service.run_isolated_command",
+                return_value=CompletedProcess([], 0, "", ""),
+            ):
+                result = service._process_heavy_isolated(
+                    source,
+                    output_dir,
+                    profile,
+                    request_hash=request_hash,
+                )
+
+            self.assertEqual(result["marker"], "canonical")
 
     def test_timeout_kills_child_process_group(self) -> None:
         if os.name != "posix":

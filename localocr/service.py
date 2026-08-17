@@ -189,7 +189,13 @@ class OCRService:
                 f"(exit={completed.returncode}). stdout_tail={stdout_tail!r} stderr_tail={stderr_tail!r}"
             )
 
-        json_path = self._project_path(output_dir) / f"{safe_output_stem(path)}.json"
+        stem = safe_output_stem(path)
+        if request_hash:
+            json_path = self._project_path(output_dir) / f"{stem}.{request_hash[:32]}.json"
+        else:
+            # Direct callers without a registry request retain the legacy
+            # child-output lookup for compatibility.
+            json_path = self._project_path(output_dir) / f"{stem}.json"
         if not json_path.exists():
             raise RuntimeError(
                 f"{profile.engine} isolated subprocess finished but did not create JSON output: {json_path}"
@@ -327,8 +333,28 @@ class OCRService:
                             request_hash=claim.request.job_key if claim is not None else None,
                         )
                         if _should_assess_auto_ocr(engine_choice, model_choice, profile):
+                            preliminary = annotate_result(
+                                result,
+                                file_path,
+                                processor=getattr(profile, "adapter", f"localocr.engine:{profile.engine}"),
+                                model_id=profile.id,
+                                pipeline_version=getattr(profile, "pipeline_version", "unknown"),
+                                config=getattr(profile, "options", {}),
+                                request_hash=claim.request.job_key if claim is not None else None,
+                                caller_binding=caller_binding,
+                                evidence_persisted=False,
+                            )
                             assessment = assess_ocr_difficulty(result)
-                            if assessment.should_escalate:
+                            if preliminary["objective_outcome"] == "no_text_detected":
+                                # Independent blank-image evidence is already
+                                # sufficient; do not spend a second model pass
+                                # merely because OCR returned no blocks.
+                                result = preliminary
+                                route_dict = _assessed_route(route_dict, assessment)
+                                route_dict["signals"] = list(route_dict.get("signals") or []) + [
+                                    "ocr_no_text_confirmed"
+                                ]
+                            elif assessment.should_escalate:
                                 vl_profile = resolve_model_reference("vl")
                                 result = self._process_selected_profile(
                                     file_path,
@@ -351,6 +377,7 @@ class OCRService:
                             config=getattr(profile, "options", {}),
                             request_hash=claim.request.job_key if claim is not None else None,
                             caller_binding=caller_binding,
+                            evidence_persisted=write_files,
                         )
                         if write_files:
                             objective_path, objective_sha256 = write_objective_sidecar(
@@ -374,6 +401,9 @@ class OCRService:
                             result["output_files"] = {k: str(v) for k, v in paths.items()}
                             result["output_file_sha256"] = {
                                 key: file_sha256(path) for key, path in paths.items()
+                            }
+                            result["output_file_size_bytes"] = {
+                                key: path.stat().st_size for key, path in paths.items()
                             }
                     if claim is not None and claim.kind == "run":
                         result = self.job_registry.complete(claim, result)

@@ -150,6 +150,7 @@ def main() -> int:
                 pipeline_version=profile.pipeline_version,
                 config=profile.options,
                 request_hash=request_hash,
+                evidence_persisted=True,
             )
             objective_path, objective_sha256 = write_objective_sidecar(
                 result["objective_result"],
@@ -164,6 +165,7 @@ def main() -> int:
             paths["objective"] = objective_path
             result["output_files"] = {k: str(v) for k, v in paths.items()}
             result["output_file_sha256"] = {key: file_sha256(path) for key, path in paths.items()}
+            result["output_file_size_bytes"] = {key: path.stat().st_size for key, path in paths.items()}
             dt = time.time() - t0
             nblocks = sum(len(p.get("blocks", [])) for p in result.get("pages", []))
             print(f"[{i}/{len(files)}] {f.name} -> 引擎={profile.engine} | 模型={profile.id} | {nblocks}块 | {dt:.1f}s | "

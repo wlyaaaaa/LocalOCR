@@ -135,6 +135,7 @@ def _to_json(result: dict, file_path: Path) -> str:
         "text_detection": result.get("text_detection"),
         "objective_result_file": result.get("objective_result_file"),
         "objective_result_sha256": result.get("objective_result_sha256"),
+        "output_file_size_bytes": result.get("output_file_size_bytes"),
         "caller_binding": result.get("caller_binding"),
         "pages": result.get("pages", []),
     }

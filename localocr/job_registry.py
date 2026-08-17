@@ -158,6 +158,7 @@ class JobRegistry:
                 "updated_at": _now_iso(),
                 "output_files": stored.get("output_files") or {},
                 "output_file_sha256": stored.get("output_file_sha256") or {},
+                "output_file_size_bytes": stored.get("output_file_size_bytes") or {},
                 "result": stored,
             },
         )
@@ -240,20 +241,64 @@ class JobRegistry:
             return False
         result = manifest.get("result") or {}
         output_hashes = result.get("output_file_sha256") or manifest.get("output_file_sha256") or {}
-        if output_hashes:
-            if not isinstance(output_hashes, dict):
+        output_sizes = result.get("output_file_size_bytes") or manifest.get("output_file_size_bytes") or {}
+        objective_path = output_files.get("objective")
+        strict_objective = bool(objective_path or result.get("objective_result"))
+        if strict_objective:
+            # A modern objective receipt is only cacheable when every emitted
+            # artifact is bound to a non-empty size and hash.  Missing maps or
+            # extra/untracked paths fail closed instead of falling back to the
+            # old path-exists check.
+            if not isinstance(output_hashes, dict) or set(output_hashes) != set(output_files):
                 return False
-            for name, expected in output_hashes.items():
-                path = output_files.get(name)
-                if not path or not isinstance(expected, str):
+            if not isinstance(output_sizes, dict) or set(output_sizes) != set(output_files):
+                return False
+            for name, raw_path in output_files.items():
+                path = Path(str(raw_path))
+                expected_hash = output_hashes.get(name)
+                expected_size = output_sizes.get(name)
+                if (
+                    not path.is_file()
+                    or not isinstance(expected_hash, str)
+                    or not expected_hash
+                    or not isinstance(expected_size, int)
+                    or expected_size <= 0
+                ):
                     return False
                 try:
-                    if file_sha256(path) != expected:
+                    if path.stat().st_size != expected_size or file_sha256(path) != expected_hash:
                         return False
                 except OSError:
                     return False
+        else:
+            # Legacy manifests remain readable with their historical
+            # path-exists behavior; no objective sidecar means no modern
+            # receipt contract is being claimed.
+            if output_hashes:
+                if not isinstance(output_hashes, dict):
+                    return False
+                for name, expected in output_hashes.items():
+                    path = output_files.get(name)
+                    if not path or not isinstance(expected, str):
+                        return False
+                    try:
+                        if file_sha256(path) != expected:
+                            return False
+                    except OSError:
+                        return False
+            if output_sizes:
+                if not isinstance(output_sizes, dict):
+                    return False
+                for name, expected in output_sizes.items():
+                    path = output_files.get(name)
+                    if not path or not isinstance(expected, int) or expected <= 0:
+                        return False
+                    try:
+                        if Path(path).stat().st_size != expected:
+                            return False
+                    except OSError:
+                        return False
 
-        objective_path = output_files.get("objective")
         if not objective_path:
             # Legacy manifests remain readable.  New service results always
             # carry the sidecar, so they take the strict branch below.

@@ -100,13 +100,14 @@ def annotate_result(
     no_text_evidence: Mapping[str, Any] | bool | None = None,
     execution_status: str = "completed",
     failure: Mapping[str, Any] | None = None,
+    evidence_persisted: bool = False,
 ) -> dict[str, Any]:
     """Attach objective outcome metadata while preserving the legacy result.
 
     Empty blocks are deliberately conservative: they produce ``indeterminate``
-    unless a processor supplies explicit, complete no-text evidence.  The
-    service currently does not manufacture that evidence from a model's empty
-    response.
+    unless a processor supplies explicit, complete no-text evidence.  The only
+    built-in producer is an independent, narrow uniform-pixel detector; a
+    model's empty response by itself never manufactures no-text evidence.
     """
 
     annotated = dict(result)
@@ -198,6 +199,7 @@ def annotate_result(
         and not source_info["zero_bytes"]
         and not source_info["unsupported"]
         and coverage["status"] == "complete"
+        and not coverage.get("exclusions")
         and normalized_execution == "completed"
         and not any(flag in quality_flags for flag in ("partial_coverage", "low_confidence", "corrupt"))
     )
@@ -221,10 +223,14 @@ def annotate_result(
             "pipeline_version": pipeline_version,
             "config_sha256": cfg_hash,
             "request_sha256": resolved_request_hash,
+            "idempotency_key": resolved_request_hash,
+            "caller_binding_sha256": caller_binding_sha256(caller_binding),
+            "engine": result.get("engine_key"),
             "coverage": coverage,
             "observations": observations,
             "exclusions": list(result.get("exclusions") or []),
             "thresholds": {"nonempty_text": "strip(text) != ''"},
+            "quality": {"status": "sufficient", "flags": [], "uncertainty": []},
             "quality_flags": [],
             "uncertainty": [],
             "method": dict(no_text_evidence) if isinstance(no_text_evidence, Mapping) else "processor_asserted",
@@ -305,7 +311,11 @@ def annotate_result(
         "negative_evidence": negative_evidence,
         "execution": {"status": normalized_execution},
         "evidence": {
-            "verification_status": "verified" if objective_outcome == "no_text_detected" else "not_persisted",
+            "verification_status": (
+                "verified"
+                if objective_outcome == "no_text_detected" and evidence_persisted
+                else "not_persisted"
+            ),
             "negative_evidence": negative_evidence,
         },
     }
@@ -457,7 +467,13 @@ def validate_objective_sidecar(
             return False
         if not isinstance(coverage, dict) or coverage.get("status") != "complete":
             return False
+        if coverage.get("exclusions") != []:
+            return False
         if not isinstance(quality, dict) or quality.get("status") != "sufficient":
+            return False
+        if quality.get("flags") != []:
+            return False
+        if payload.get("uncertainty") != []:
             return False
         if not isinstance(evidence, dict) or evidence.get("verification_status") != "verified":
             return False
@@ -480,6 +496,10 @@ def validate_objective_sidecar(
             return False
         if negative_payload.get("schema") != NEGATIVE_EVIDENCE_SCHEMA:
             return False
+        if negative_payload.get("media_kind") != identity.get("media_kind"):
+            return False
+        if negative_payload.get("source_format") != identity.get("source_format"):
+            return False
         if negative_payload.get("raw_sha256") != identity.get("raw_sha256"):
             return False
         if negative_payload.get("source_size") != identity.get("source_size"):
@@ -489,6 +509,33 @@ def validate_objective_sidecar(
         if negative_payload.get("request_sha256") != identity.get("request_sha256"):
             return False
         if negative_payload.get("config_sha256") != identity.get("config_sha256"):
+            return False
+        if negative_payload.get("processor") != identity.get("processor"):
+            return False
+        if negative_payload.get("model_id") != identity.get("model_id"):
+            return False
+        if negative_payload.get("pipeline_version") != identity.get("pipeline_version"):
+            return False
+        if negative_payload.get("request_sha256") != identity.get("request_sha256"):
+            return False
+        if negative_payload.get("idempotency_key") != identity.get("idempotency_key"):
+            return False
+        if negative_payload.get("caller_binding_sha256") != identity.get("caller_binding_sha256"):
+            return False
+        if negative_payload.get("engine") != identity.get("engine"):
+            return False
+        negative_quality = negative_payload.get("quality")
+        if not isinstance(negative_quality, dict) or negative_quality.get("status") != "sufficient":
+            return False
+        if negative_quality.get("flags") != [] or negative_quality.get("uncertainty") != []:
+            return False
+        if negative_payload.get("coverage") != coverage:
+            return False
+        if negative_payload.get("exclusions") != coverage.get("exclusions"):
+            return False
+        if negative_payload.get("quality_flags") != quality.get("flags"):
+            return False
+        if negative_payload.get("uncertainty") != payload.get("uncertainty"):
             return False
     return True
 

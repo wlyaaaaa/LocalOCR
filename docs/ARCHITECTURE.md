@@ -95,14 +95,14 @@ API 响应的每个 `results[]` 都包含 `route`，记录 `effective_engine`、
 `quality.status` 表示 `sufficient`、`low_confidence` 或 `unknown`。空 block、空文本或零字节不能证明
 `no_text_detected`。规范负向证据必须是非空 canonical artifact，并绑定 raw hash、processor/model/version、
 config/request hash、实际页/区域、排除范围、阈值和不确定性。PDF 的 `media_kind` 仍为 `image`，容器类型另记为
-`source_format=pdf`。
+`source_format=pdf`。内存结果的 `evidence.verification_status` 为 `not_persisted`；只有写入 sidecar 后才提升为 `verified`。
 旧 `<stem>.txt|md|json` 仅作为展示兼容投影；写盘任务同时生成带 request hash 的 canonical 投影和
 `*.objective.json` sidecar，后者与 canonical 投影一起参与 cache identity 校验。
 
 写盘 OCR 请求在推理前会登记到 `_server/jobs/<job_key>.json`，并用同名 `.lock`
 做原子 claim。`job_key` 由源文件路径、文件内容 hash、请求语义、路由策略、模型 profile、
 engine 和输出目录决定；因此 auto、显式 engine 与显式 model 不会错误复用彼此的结果。
-同一任务完成且输出文件及 objective sidecar 通过 schema、尺寸、hash、source/request/model/config identity
+同一任务完成且所有输出文件均有非空 `size_bytes`/`sha256`，且 objective sidecar 通过 schema、尺寸、hash、source/request/model/config identity
 重验时返回 `cache_status=cache_hit`；同一任务仍在运行时返回
 `status=active_localocr_task` 和 `recommendation=do_not_blindly_retry`，避免客户端超时后再次拉起相同 OCR。
 

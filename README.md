@@ -9,7 +9,7 @@
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
 - **Smart Router v3 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
-- **客观结果与空文本语义**：每个完成结果增加 `objective_outcome=text_detected|no_text_detected|indeterminate`、`execution_status`、`coverage`、`quality` 和 `failure`。模型返回空 block/空文本不会被当成“确实无文字”；只有完整覆盖且独立像素检测或 adapter telemetry 生成的规范负向证据才会是 `no_text_detected`。规范 `media.objective-result.v1` sidecar 按请求 hash 隔离并在 cache hit 时校验 schema、尺寸、哈希和输入/模型身份。
+- **客观结果与空文本语义**：每个完成结果增加 `objective_outcome=text_detected|no_text_detected|indeterminate`、`execution_status`、`coverage`、`quality` 和 `failure`。模型返回空 block/空文本不会被当成“确实无文字”；只有完整覆盖、无排除范围且独立像素检测或 adapter telemetry 生成的规范负向证据才会是 `no_text_detected`。内存结果的 `evidence.verification_status` 保持 `not_persisted`，写入 sidecar 后才为 `verified`。规范 `media.objective-result.v1` sidecar 按请求 hash 隔离并在 cache hit 时校验 schema、尺寸、哈希和输入/模型身份。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
@@ -69,7 +69,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 ## 常见误用
 
 - `cache_status=cache_hit` 是成功复用已校验的输出，不是失败；直接读 `results[].output_files`。其中 `objective` sidecar 是客观结果的校验依据。
-- `results[].objective_outcome=indeterminate` 表示引擎完成但没有足够证据判断无文字；它不是 `no_text_detected`，也不等价于图片/事件无意义。`execution_status=corrupt|unsupported|failed`、`coverage.status=partial|unknown` 和 `quality.status=low_confidence|unknown` 要分别处理。
+- `results[].objective_outcome=indeterminate` 表示引擎完成但没有足够证据判断无文字；它不是 `no_text_detected`，也不等价于图片/事件无意义。`execution_status=corrupt|unsupported|failed`、`coverage.status=partial|unknown` 和 `quality.status=low_confidence|unknown` 要分别处理。只有 sidecar 的 `evidence.verification_status=verified` 才可作为持久化负向证据。
 - `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
 - `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
 - `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`18666` 属于 ChineseASR，不是 LocalOCR 的回退端口。
