@@ -366,8 +366,12 @@ def write_objective_sidecar(
     path = output / f"{stem}.{suffix}.objective.json"
     payload = dict(objective_result)
     payload_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    path.write_text(payload_text, encoding="utf-8")
-    return path, sha256_text(payload_text)
+    payload_bytes = payload_text.encode("utf-8")
+    # Text mode rewrites LF to CRLF on Windows, which made the returned hash
+    # describe the pre-write string instead of the persisted artifact bytes.
+    # Write and hash the exact same UTF-8 bytes on every platform.
+    path.write_bytes(payload_bytes)
+    return path, hashlib.sha256(payload_bytes).hexdigest()
 
 
 def validate_objective_sidecar(

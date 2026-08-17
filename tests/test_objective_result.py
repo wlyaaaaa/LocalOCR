@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 import sys
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -63,6 +65,59 @@ def write_pattern_png(path: Path, width: int = 16, height: int = 16) -> None:
 
 
 class ObjectiveResultTest(unittest.TestCase):
+    def test_sidecar_hash_matches_exact_utf8_bytes_without_text_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "input.png"
+            source.write_bytes(b"source")
+            request_hash = "w" * 64
+            config = {"lang": "ch"}
+            result = annotate_result(
+                {
+                    "engine_key": "ocr",
+                    "pages": [
+                        {
+                            "page_index": 0,
+                            "blocks": [{"text": "Windows newline regression", "score": 0.99}],
+                        }
+                    ],
+                },
+                source,
+                processor="fake:ocr",
+                model_id="fake-ocr",
+                pipeline_version="test",
+                config=config,
+                request_hash=request_hash,
+            )
+            payload = result["objective_result"]
+            expected = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+            with patch.object(Path, "write_text", side_effect=AssertionError("sidecar used text mode")):
+                sidecar, reported_sha256 = write_objective_sidecar(
+                    payload,
+                    source,
+                    root / "out",
+                    request_hash=request_hash,
+                )
+
+            actual = sidecar.read_bytes()
+            self.assertEqual(actual, expected)
+            self.assertTrue(actual.endswith(b"\n"))
+            self.assertNotIn(b"\r\n", actual)
+            self.assertEqual(reported_sha256, hashlib.sha256(actual).hexdigest())
+            self.assertTrue(
+                validate_objective_sidecar(
+                    sidecar,
+                    request_hash=request_hash,
+                    raw_sha256=file_sha256(source),
+                    source_size=source.stat().st_size,
+                    profile_id="fake-ocr",
+                    engine="ocr",
+                    config_sha256_value=config_sha256(config),
+                    expected_file_sha256=reported_sha256,
+                )
+            )
+
     def test_empty_blocks_are_indeterminate_not_no_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "camera.jpg"
