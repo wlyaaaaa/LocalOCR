@@ -18,6 +18,35 @@ def write_outputs(result: dict[str, Any], file_path: Path, out_dir: Path) -> dic
     return {"txt": txt_path, "md": md_path, "json": json_path}
 
 
+def write_isolated_projections(
+    result: dict[str, Any],
+    file_path: Path,
+    out_dir: Path,
+    *,
+    request_hash: str,
+) -> dict[str, Path]:
+    """Write hash-isolated projections while retaining legacy stem outputs.
+
+    The legacy ``<stem>.txt|md|json`` files remain convenient display
+    projections and are intentionally compatible.  Cacheable artifacts use
+    these request-bound paths so same-stem files from different directories
+    cannot share a canonical output path.
+    """
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = (request_hash or "unknown")[:32]
+    stem = safe_output_stem(file_path)
+    paths = {
+        "canonical_txt": out_dir / f"{stem}.{suffix}.txt",
+        "canonical_md": out_dir / f"{stem}.{suffix}.md",
+        "canonical_json": out_dir / f"{stem}.{suffix}.json",
+    }
+    paths["canonical_txt"].write_text(_to_txt(result, file_path), encoding="utf-8")
+    paths["canonical_md"].write_text(_to_md(result, file_path), encoding="utf-8")
+    paths["canonical_json"].write_text(_to_json(result, file_path), encoding="utf-8")
+    return paths
+
+
 def safe_output_stem(path: Path) -> str:
     import re
     return re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", path.stem)[:120]
@@ -93,6 +122,20 @@ def _to_json(result: dict, file_path: Path) -> str:
         "page_width": result.get("page_width"),
         "page_height": result.get("page_height"),
         "route": result.get("route"),
+        # New objective-result fields are additive.  Existing consumers can
+        # continue reading engine/pages/route while callers that need to
+        # distinguish empty OCR from no-text evidence use these fields.
+        "objective_result": result.get("objective_result"),
+        "objective_outcome": result.get("objective_outcome"),
+        "execution_status": result.get("execution_status"),
+        "execution": result.get("execution"),
+        "coverage": result.get("coverage"),
+        "quality": result.get("quality"),
+        "failure": result.get("failure"),
+        "text_detection": result.get("text_detection"),
+        "objective_result_file": result.get("objective_result_file"),
+        "objective_result_sha256": result.get("objective_result_sha256"),
+        "caller_binding": result.get("caller_binding"),
         "pages": result.get("pages", []),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

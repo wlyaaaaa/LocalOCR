@@ -8,10 +8,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .model_registry import ModelProfile
+from .model_registry import ModelProfile, resolve_model_reference
+from .objective_result import (
+    config_sha256,
+    file_sha256,
+    validate_objective_sidecar,
+)
 
 SCHEMA_VERSION = 1
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,7 @@ class JobRequest:
     engine: str
     output_dir: Path
     request_variant: str = ""
+    config_sha256: str = ""
 
 
 @dataclass
@@ -61,6 +67,9 @@ class JobRegistry:
             "engine": profile.engine,
             "output_dir": _norm_path(output),
             "profile_id": profile.id,
+            "adapter": profile.adapter,
+            "pipeline_version": profile.pipeline_version,
+            "config": profile.options,
             "request_variant": request_variant,
             "source_path": _norm_path(source),
             "source_sha256": source_hash,
@@ -77,6 +86,7 @@ class JobRegistry:
             engine=profile.engine,
             output_dir=output,
             request_variant=request_variant,
+            config_sha256=config_sha256(profile.options),
         )
 
     def try_claim(self, request: JobRequest) -> JobClaim:
@@ -114,6 +124,7 @@ class JobRegistry:
                 "engine": request.engine,
                 "model_id": request.profile_id,
                 "request_variant": request.request_variant,
+                "config_sha256": request.config_sha256,
                 "output_dir": str(request.output_dir),
                 "started_at": _now_iso(),
                 "updated_at": _now_iso(),
@@ -141,10 +152,12 @@ class JobRegistry:
                 "engine": stored.get("engine_key") or claim.request.engine,
                 "model_id": stored.get("model_id") or claim.request.profile_id,
                 "request_variant": claim.request.request_variant,
+                "config_sha256": claim.request.config_sha256,
                 "output_dir": str(claim.request.output_dir),
                 "started_at": started_at,
                 "updated_at": _now_iso(),
                 "output_files": stored.get("output_files") or {},
+                "output_file_sha256": stored.get("output_file_sha256") or {},
                 "result": stored,
             },
         )
@@ -165,6 +178,7 @@ class JobRegistry:
                 "engine": claim.request.engine,
                 "model_id": claim.request.profile_id,
                 "request_variant": claim.request.request_variant,
+                "config_sha256": claim.request.config_sha256,
                 "output_dir": str(claim.request.output_dir),
                 "started_at": started_at,
                 "updated_at": _now_iso(),
@@ -187,8 +201,9 @@ class JobRegistry:
             return {"ok": False, "status": "not_found", "job_key": job_key}
         status = dict(manifest)
         status["ok"] = True
-        status["cache_available"] = status.get("status") == "completed" and _output_files_exist(
-            status.get("output_files") or {}
+        status["cache_available"] = status.get("status") == "completed" and self._cache_artifacts_valid(
+            request=None,
+            manifest=status,
         )
         return status
 
@@ -203,7 +218,7 @@ class JobRegistry:
         if manifest.get("status") != "completed":
             return None
         output_files = manifest.get("output_files") or {}
-        if not output_files or not _output_files_exist(output_files):
+        if not output_files or not self._cache_artifacts_valid(request=request, manifest=manifest):
             return None
         result = dict(manifest.get("result") or {})
         result["job_id"] = request.job_id
@@ -211,6 +226,74 @@ class JobRegistry:
         result["cache_status"] = "cache_hit"
         result["output_files"] = output_files
         return result
+
+    def _cache_artifacts_valid(
+        self,
+        *,
+        request: JobRequest | None,
+        manifest: dict[str, Any],
+    ) -> bool:
+        """Validate new objective receipts and projection hashes before reuse."""
+
+        output_files = manifest.get("output_files") or {}
+        if not _output_files_exist(output_files):
+            return False
+        result = manifest.get("result") or {}
+        output_hashes = result.get("output_file_sha256") or manifest.get("output_file_sha256") or {}
+        if output_hashes:
+            if not isinstance(output_hashes, dict):
+                return False
+            for name, expected in output_hashes.items():
+                path = output_files.get(name)
+                if not path or not isinstance(expected, str):
+                    return False
+                try:
+                    if file_sha256(path) != expected:
+                        return False
+                except OSError:
+                    return False
+
+        objective_path = output_files.get("objective")
+        if not objective_path:
+            # Legacy manifests remain readable.  New service results always
+            # carry the sidecar, so they take the strict branch below.
+            return not result.get("objective_result")
+        if request is None:
+            request_hash = str(manifest.get("job_key") or "")
+            raw_sha256 = str(manifest.get("source_sha256") or "")
+            source_size = manifest.get("source_size")
+            profile_id = str(result.get("model_id") or manifest.get("model_id") or "")
+            engine = str(result.get("engine_key") or manifest.get("engine") or "")
+            config_hash = manifest.get("config_sha256")
+            try:
+                config_hash = config_sha256(resolve_model_reference(profile_id).options)
+            except (KeyError, ValueError):
+                pass
+        else:
+            request_hash = request.job_key
+            raw_sha256 = request.source_sha256
+            source_size = request.source_size
+            # Auto routing may finish on VL after the request was initially
+            # claimed for OCR.  Bind the receipt to the final stored profile,
+            # while retaining the request job key as the idempotency identity.
+            profile_id = str(result.get("model_id") or request.profile_id)
+            engine = str(result.get("engine_key") or request.engine)
+            config_hash = request.config_sha256
+            try:
+                config_hash = config_sha256(resolve_model_reference(profile_id).options)
+            except (KeyError, ValueError):
+                pass
+        expected_objective_hash = output_hashes.get("objective") if isinstance(output_hashes, dict) else None
+        return validate_objective_sidecar(
+            objective_path,
+            request_hash=request_hash,
+            raw_sha256=raw_sha256,
+            source_size=source_size,
+            profile_id=profile_id,
+            engine=engine,
+            config_sha256_value=config_hash or None,
+            expected_file_sha256=expected_objective_hash,
+        )
 
     def _active_response(self, request: JobRequest, manifest: dict[str, Any]) -> dict[str, Any]:
         return {

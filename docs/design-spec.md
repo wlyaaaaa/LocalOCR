@@ -160,10 +160,15 @@ PP-OCRv6_medium，结构化 profile 固定使用 PP-OCRv5。
 
 - **TXT**：纯文本，按阅读顺序拼接，段落用空行分隔。
 - **Markdown**：按页/按块组织，含标题层级；表格输出为 Markdown 表格；公式保留 LaTeX。
-- **JSON**：结构化，字段：
+- **JSON**：结构化兼容投影，字段：
   - `file`, `engine`, `model`, `device`, `gpu_capability`, `pages`[]
   - 每页：`page_index`, `blocks`[]，每块含 `type`(text/table/figure/formula)、
     `text`、`bbox`（坐标）、`score`（置信度）、`order`（阅读顺序）。
+- 结果还包含 `objective_outcome=text_detected|no_text_detected|indeterminate`、
+  `execution.status`、`coverage.status`、`quality.status` 和 `failure`。空 block/空文本/零字节不证明
+  `no_text_detected`；完整覆盖且独立 detector/adapter telemetry 生成的规范负向证据才可确认无文字。
+  每个写盘请求另生成按 request hash 隔离的 `*.objective.json`，schema 为
+  `media.objective-result.v1`，cache hit 必须复验 sidecar 的 schema、`size_bytes`、hash 和输入/模型身份。
 - 坐标、置信度、表格结构、阅读顺序均来自引擎输出，原样保留。
 
 ## 7. 模型预下载（scripts/download_models.py）

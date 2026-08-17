@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from localocr.outputs import write_outputs
+from localocr.outputs import write_isolated_projections, write_outputs
 
 
 class OutputTest(unittest.TestCase):
@@ -43,6 +43,19 @@ class OutputTest(unittest.TestCase):
                 payload["route"]["difficulty"]["policy_version"],
                 "ocr-confidence-v1",
             )
+
+    def test_hash_isolated_projections_do_not_share_same_stem_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "sample.png"
+            source.write_bytes(b"image")
+            result = {"engine": "Fake OCR", "pages": [{"page_index": 0, "blocks": []}]}
+            first = write_isolated_projections(result, source, root / "out", request_hash="a" * 64)
+            second = write_isolated_projections(result, source, root / "out", request_hash="b" * 64)
+
+            self.assertNotEqual(first["canonical_json"], second["canonical_json"])
+            self.assertTrue(first["canonical_json"].exists())
+            self.assertTrue(second["canonical_json"].exists())
 
 
 if __name__ == "__main__":

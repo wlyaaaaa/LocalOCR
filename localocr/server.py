@@ -4,7 +4,7 @@ import argparse
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -22,6 +22,10 @@ class OCRPathRequest(BaseModel):
     recursive: bool = False
     out_dir: str | None = None
     write_outputs: bool = True
+    caller_binding: dict[str, Any] | None = Field(
+        None,
+        description="Opaque caller-owned binding to pass through unchanged; LocalOCR does not mint governance fields",
+    )
 
 
 class OCRUploadOptions(BaseModel):
@@ -100,6 +104,7 @@ def ocr_path(req: OCRPathRequest) -> dict:
             recursive=req.recursive,
             out_dir=out_dir,
             write_files=req.write_outputs,
+            caller_binding=req.caller_binding,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}") from exc

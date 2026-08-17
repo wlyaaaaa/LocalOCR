@@ -10,7 +10,13 @@ from .gpu_probe import probe_gpu, format_probe, GPUProbeError
 from .gpu_broker import GpuBrokerLease
 from .router import collect_files, is_pdf
 from .model_registry import get_engine, select_model_profile
-from .outputs import write_outputs
+from .objective_result import (
+    annotate_result,
+    derive_request_hash,
+    file_sha256,
+    write_objective_sidecar,
+)
+from .outputs import write_isolated_projections, write_outputs
 from .pdf_utils import render_pdf_to_files
 
 
@@ -28,6 +34,7 @@ def _ocr_pdf_with_ocr_engine(pdf_path: Path, engine, tmp_dir: Path) -> dict:
         "model": engine.model_name,
         "model_id": engine.profile_id,
         "device": engine.device,
+        "expected_page_count": len(images),
         "pages": pages,
     }
 
@@ -46,6 +53,7 @@ def _ocr_pdf_with_vl(pdf_path: Path, engine, tmp_dir: Path) -> dict:
         "model": engine.model_name,
         "model_id": engine.profile_id,
         "device": engine.device,
+        "expected_page_count": len(images),
         "pages": pages,
     }
 
@@ -89,6 +97,11 @@ def main() -> int:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--request-hash",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
 
     if not args.no_gpu_probe:
@@ -121,7 +134,36 @@ def main() -> int:
         try:
             profile = select_model_profile(f, engine_choice=args.engine, model_choice=args.model)
             result = process_one(f, args.engine, args.device, tmp_dir, engine_cache, args.model)
+            request_hash = args.request_hash or derive_request_hash(
+                f,
+                processor=profile.adapter,
+                model_id=profile.id,
+                pipeline_version=profile.pipeline_version,
+                config=profile.options,
+                request_variant=f"engine={args.engine};model={args.model or '<default>'}",
+            )
+            result = annotate_result(
+                result,
+                f,
+                processor=profile.adapter,
+                model_id=profile.id,
+                pipeline_version=profile.pipeline_version,
+                config=profile.options,
+                request_hash=request_hash,
+            )
+            objective_path, objective_sha256 = write_objective_sidecar(
+                result["objective_result"],
+                f,
+                out_dir,
+                request_hash=request_hash,
+            )
+            result["objective_result_file"] = str(objective_path)
+            result["objective_result_sha256"] = objective_sha256
             paths = write_outputs(result, f, out_dir)
+            paths.update(write_isolated_projections(result, f, out_dir, request_hash=request_hash))
+            paths["objective"] = objective_path
+            result["output_files"] = {k: str(v) for k, v in paths.items()}
+            result["output_file_sha256"] = {key: file_sha256(path) for key, path in paths.items()}
             dt = time.time() - t0
             nblocks = sum(len(p.get("blocks", [])) for p in result.get("pages", []))
             print(f"[{i}/{len(files)}] {f.name} -> 引擎={profile.engine} | 模型={profile.id} | {nblocks}块 | {dt:.1f}s | "

@@ -201,6 +201,31 @@ class IsolatedProcessTest(unittest.TestCase):
             self.assertEqual(response["route"]["effective_engine"], "ocr")
             self.assertEqual(service.calls, 0)
 
+    def test_same_stem_projections_are_isolated_and_old_cache_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first" / "same.png"
+            second_source = root / "second" / "same.png"
+            first_source.parent.mkdir()
+            second_source.parent.mkdir()
+            first_source.write_bytes(b"first image bytes")
+            second_source.write_bytes(b"second image bytes")
+            service = FakeCacheService(tmp_dir=root / "tmp", job_dir=root / "jobs")
+
+            first = service.process_inputs([first_source], engine_choice="ocr", out_dir=root / "out")
+            second = service.process_inputs([second_source], engine_choice="ocr", out_dir=root / "out")
+
+            first_files = first["results"][0]["output_files"]
+            second_files = second["results"][0]["output_files"]
+            self.assertNotEqual(first_files["objective"], second_files["objective"])
+            self.assertNotEqual(first_files["canonical_json"], second_files["canonical_json"])
+
+            # The legacy same-stem display JSON was overwritten by the second
+            # source, so the first job must fail artifact-hash validation and
+            # rerun rather than report a false cache hit.
+            again = service.process_inputs([first_source], engine_choice="ocr", out_dir=root / "out")
+            self.assertEqual(again["results"][0]["cache_status"], "stored")
+
     def test_service_treats_structure_as_isolated_heavy_engine(self) -> None:
         service_source = (Path(__file__).resolve().parent.parent / "localocr" / "service.py").read_text(
             encoding="utf-8"

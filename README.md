@@ -9,6 +9,7 @@
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
 - **Smart Router v3 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
+- **客观结果与空文本语义**：每个完成结果增加 `objective_outcome=text_detected|no_text_detected|indeterminate`、`execution_status`、`coverage`、`quality` 和 `failure`。模型返回空 block/空文本不会被当成“确实无文字”；只有完整覆盖且独立像素检测或 adapter telemetry 生成的规范负向证据才会是 `no_text_detected`。规范 `media.objective-result.v1` sidecar 按请求 hash 隔离并在 cache hit 时校验 schema、尺寸、哈希和输入/模型身份。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
@@ -67,7 +68,8 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 
 ## 常见误用
 
-- `cache_status=cache_hit` 是成功复用已有输出，不是失败；直接读 `results[].output_files`。
+- `cache_status=cache_hit` 是成功复用已校验的输出，不是失败；直接读 `results[].output_files`。其中 `objective` sidecar 是客观结果的校验依据。
+- `results[].objective_outcome=indeterminate` 表示引擎完成但没有足够证据判断无文字；它不是 `no_text_detected`，也不等价于图片/事件无意义。`execution_status=corrupt|unsupported|failed`、`coverage.status=partial|unknown` 和 `quality.status=low_confidence|unknown` 要分别处理。
 - `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
 - `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
 - `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`18666` 属于 ChineseASR，不是 LocalOCR 的回退端口。
@@ -89,7 +91,7 @@ wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 ### 2. 使用
 
 **方式 A — 拖拽（最简单）**：把图片/PDF/文件夹拖到 `E:\Projects\Tools\LocalOCR\start.bat` 上，松手即跑。
-结果出现在 `E:\Projects\Tools\LocalOCR\outputs\` 下，每个输入文件产出 `.txt` / `.md` / `.json` 三份。
+结果出现在 `E:\Projects\Tools\LocalOCR\outputs\` 下，每个输入文件产出兼容的 `.txt` / `.md` / `.json` 展示投影，另有按请求 hash 隔离的 `.txt` / `.md` / `.json` canonical 投影和 `.objective.json` 客观结果 sidecar。
 
 **方式 B — 命令行**：
 
@@ -202,7 +204,8 @@ localocr/        源码
   difficulty.py  OCR 结果级困难判定；仅 auto 首轮 OCR 可触发本地 VL 升级
   engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
   job_registry.py 文件型任务缓存、去重和 job 状态 manifest
-  outputs.py     TXT/MD/JSON 输出
+  outputs.py     TXT/MD/JSON 兼容投影输出
+  objective_result.py  客观结果 schema、负向证据和 cache sidecar 校验
   service.py     常驻服务层，缓存轻量 OCR，引擎重任务走隔离子进程，并接入任务级缓存
   server.py      FastAPI 本地 API，提供 health/job/OCR 端点
   gpu_probe.py   GPU 强制探针
