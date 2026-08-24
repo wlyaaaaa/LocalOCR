@@ -30,7 +30,11 @@ from .objective_result import (
     write_objective_sidecar,
 )
 from .outputs import safe_output_stem, write_isolated_projections, write_outputs
-from .pdf_utils import render_pdf_to_files
+from .pdf_utils import (
+    DEFAULT_RENDER_SCALE,
+    rendered_pdf_page_metadata,
+    render_pdf_to_files,
+)
 from .router import collect_files, is_pdf
 
 
@@ -204,6 +208,11 @@ class OCRService:
         result["source_file"] = str(path)
         result["engine_key"] = profile.engine
         result["model_id"] = profile.id
+        if is_pdf(path):
+            rendered_images = sorted(
+                self._project_path(tmp_dir).glob(f"{safe_output_stem(path)}_p*.png")
+            )
+            self._annotate_pdf_pages(result, rendered_images)
         return result
 
     def _ocr_pdf_with_engine(self, pdf_path: Path, profile: ModelProfile, engine) -> dict[str, Any]:
@@ -214,7 +223,7 @@ class OCRService:
             for page in result.get("pages", []):
                 page["page_index"] = i
                 pages.append(page)
-        return {
+        result = {
             "engine": engine.engine_name,
             "model": engine.model_name,
             "model_id": profile.id,
@@ -222,6 +231,32 @@ class OCRService:
             "expected_page_count": len(images),
             "pages": pages,
         }
+        self._annotate_pdf_pages(result, images)
+        return result
+
+    @staticmethod
+    def _annotate_pdf_pages(result: dict[str, Any], images: list[Path]) -> None:
+        pages = result.get("pages") or []
+        for index, page in enumerate(pages):
+            image_path = images[index] if index < len(images) else None
+            if image_path is not None:
+                metadata = rendered_pdf_page_metadata(
+                    image_path,
+                    scale=DEFAULT_RENDER_SCALE,
+                )
+            else:
+                metadata = {
+                    "coordinate_space": "image_pixels",
+                    "rendered_pdf_pixels": True,
+                    "render_scale": float(DEFAULT_RENDER_SCALE),
+                    "rendered_width": page.get("width"),
+                    "rendered_height": page.get("height"),
+                    "rendered_pdf_size": {
+                        "width": page.get("width"),
+                        "height": page.get("height"),
+                    },
+                }
+            page.update(metadata)
 
     def _process_file_with_profile(self, path: Path, profile: ModelProfile) -> dict[str, Any]:
         engine = self._engine(profile)

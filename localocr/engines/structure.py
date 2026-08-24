@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from paddleocr import PPStructureV3
@@ -21,6 +22,27 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "use_seal_recognition": True,
     "use_region_detection": True,
     "format_block_content": True,
+}
+
+COORDINATE_SPACE = "image_pixels"
+_NON_TEXT_LABELS = {
+    "face",
+    "person",
+    "human",
+    "portrait",
+    "figure",
+    "image",
+    "人脸",
+    "人物",
+    "人像",
+}
+_STRUCTURE_DETAIL_KEYS = {
+    "table_res_list",
+    "formula_res_list",
+    "seal_res_list",
+    "region_det_res",
+    "region_det_res_list",
+    "region_res_list",
 }
 
 
@@ -66,14 +88,26 @@ class StructureV3Engine:
         dpr = data.get("doc_preprocessor_res") or {}
         angle = dpr.get("angle") if isinstance(dpr, dict) else None
 
-        blocks = _blocks_from_parsing(data.get("parsing_res_list") or [])
-        if not blocks:
+        excluded_regions: list[dict[str, Any]] = []
+        parsing = data.get("parsing_res_list") or []
+        blocks = _blocks_from_parsing(
+            parsing,
+            excluded_regions=excluded_regions,
+        )
+        if not parsing:
             blocks = _blocks_from_overall_ocr(data.get("overall_ocr_res") or {})
+
+        text_lines = _text_lines_from_overall_ocr(data.get("overall_ocr_res") or {})
+        structure_details = _structure_details(data)
 
         page: dict[str, Any] = {
             "page_index": int(data.get("page_index") or 0),
             "blocks": blocks,
             "structure_keys": sorted(str(k) for k in data.keys()),
+            "structure_details": structure_details,
+            "text_lines": text_lines,
+            "excluded_regions": excluded_regions,
+            "coordinate_space": COORDINATE_SPACE,
         }
         if data.get("width") is not None:
             page["width"] = data.get("width")
@@ -95,24 +129,53 @@ class StructureV3Engine:
         }
 
 
-def _blocks_from_parsing(parsing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _blocks_from_parsing(
+    parsing: list[dict[str, Any]],
+    *,
+    excluded_regions: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     for i, raw in enumerate(parsing):
         label = str(raw.get("block_label") or "text")
         btype = _block_type(label)
         content = str(raw.get("block_content") or "")
         text = content if btype in {"table", "formula"} else _strip_html(content)
+        score = _optional_score(
+            raw.get("score", raw.get("block_score", raw.get("confidence")))
+        )
+        bbox, polygon, rect = _geometry_fields(
+            raw.get("block_bbox"),
+            raw.get("block_polygon_points"),
+        )
+        if _is_non_text_label(label, btype):
+            if excluded_regions is not None:
+                excluded_regions.append(
+                    {
+                        "type": btype,
+                        "label": label,
+                        "bbox": bbox,
+                        "rect": rect,
+                        "polygon": polygon,
+                        "order": raw.get("block_order"),
+                        "block_id": raw.get("block_id"),
+                        "group_id": raw.get("group_id"),
+                        "coordinate_space": COORDINATE_SPACE,
+                    }
+                )
+            continue
         blocks.append(
             {
                 "type": btype,
                 "label": label,
                 "text": text.strip(),
-                "score": None,
-                "bbox": _norm_box(raw.get("block_bbox")),
-                "polygon": _norm_poly(raw.get("block_polygon_points")),
+                "score": score,
+                "bbox": bbox,
+                "rect": rect,
+                "polygon": polygon,
                 "order": raw.get("block_order"),
                 "block_id": raw.get("block_id"),
                 "group_id": raw.get("group_id"),
+                "coordinate_space": COORDINATE_SPACE,
             }
         )
     blocks.sort(key=lambda x: (_sort_order(x), _sort_y(x), _sort_x(x)))
@@ -120,26 +183,117 @@ def _blocks_from_parsing(parsing: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _blocks_from_overall_ocr(overall: dict[str, Any]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for i, line in enumerate(_text_lines_from_overall_ocr(overall)):
+        blocks.append(
+            {
+                "type": "text",
+                "text": line["text"],
+                "score": line["score"],
+                "bbox": line["bbox"],
+                "rect": line["rect"],
+                "polygon": line["polygon"],
+                "order": i,
+                "coordinate_space": COORDINATE_SPACE,
+            }
+        )
+    return blocks
+
+
+def _text_lines_from_overall_ocr(overall: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return raw OCR lines without mixing them into layout blocks."""
+
     polys = overall.get("dt_polys") or overall.get("rec_polys") or []
     texts = overall.get("rec_texts") or []
     scores = overall.get("rec_scores") or []
     boxes = overall.get("rec_boxes") or []
-    blocks: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
     n = max(len(texts), len(polys), len(boxes))
     for i in range(n):
-        poly = polys[i] if i < len(polys) else None
-        box = boxes[i] if i < len(boxes) else None
-        score = float(scores[i]) if i < len(scores) else 0.0
-        blocks.append(
+        poly = _norm_poly(polys[i]) if i < len(polys) else None
+        box = _norm_box(boxes[i]) if i < len(boxes) else None
+        legacy_bbox = poly if poly else box
+        raw_score = scores[i] if i < len(scores) else 0.0
+        try:
+            score = round(float(raw_score), 6)
+        except (TypeError, ValueError):
+            score = 0.0
+        lines.append(
             {
-                "type": "text",
+                "line_index": i,
                 "text": str(texts[i] if i < len(texts) else ""),
-                "score": round(score, 6),
-                "bbox": _norm_poly(poly) if poly else _norm_box(box),
-                "order": i,
+                "score": score,
+                "bbox": legacy_bbox,
+                "rect": _rect_from_geometry(box or poly),
+                "polygon": poly,
+                "coordinate_space": COORDINATE_SPACE,
+                "source": "overall_ocr_res",
             }
         )
-    return blocks
+    return lines
+
+
+def _structure_details(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep bounded JSON-native table/formula/seal/region payloads."""
+
+    details: dict[str, Any] = {}
+    for key, value in data.items():
+        key_text = str(key)
+        if key_text in _STRUCTURE_DETAIL_KEYS:
+            details[key_text] = _json_native(value)
+    return details
+
+
+def _json_native(value: Any) -> Any:
+    """Convert Paddle/numpy containers into JSON-native values."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _json_native(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(item) for item in value]
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return _json_native(tolist())
+    item = getattr(value, "item", None)
+    if callable(item):
+        return _json_native(item())
+    return str(value)
+
+
+def _optional_score(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value), 6)
+    except (TypeError, ValueError):
+        return None
+
+
+def _geometry_fields(bbox: Any, polygon: Any) -> tuple[Any, Any, list[int] | None]:
+    norm_bbox = _norm_box(bbox)
+    norm_polygon = _norm_poly(polygon)
+    return norm_bbox, norm_polygon, _rect_from_geometry(norm_bbox or norm_polygon)
+
+
+def _rect_from_geometry(geometry: Any) -> list[int] | None:
+    if not isinstance(geometry, list) or not geometry:
+        return None
+    if len(geometry) == 4 and all(not isinstance(value, list) for value in geometry):
+        return [int(round(float(value))) for value in geometry]
+    points = [point for point in geometry if isinstance(point, list) and len(point) >= 2]
+    if not points:
+        return None
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    return [int(round(min(xs))), int(round(min(ys))), int(round(max(xs))), int(round(max(ys)))]
+
+
+def _is_non_text_label(label: str, btype: str) -> bool:
+    normalized = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", label.casefold())
+    tokens = set(normalized.split())
+    return btype in _NON_TEXT_LABELS or bool(tokens & _NON_TEXT_LABELS)
 
 
 def _block_type(label: str) -> str:
@@ -192,6 +346,8 @@ def _sort_x(block: dict[str, Any]) -> int:
 def _norm_box(box):
     if box is None:
         return None
+    if isinstance(box, (list, tuple)) and box and isinstance(box[0], (list, tuple)):
+        return _norm_poly(box)
     return [int(round(float(v))) for v in box]
 
 

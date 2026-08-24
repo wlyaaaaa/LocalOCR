@@ -14,6 +14,8 @@
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
 - **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
+  JSON 在保留旧 `bbox` 的同时增加 `rect` / `polygon` / `coordinate_space=image_pixels`；Structure 结果另保留
+  JSON-native `structure_details`、独立 `text_lines` 和非文字区域 `excluded_regions`。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
 - **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
 - **任务级缓存/去重**：API 会按源文件、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
@@ -187,6 +189,13 @@ Smart Router v3；`results[].route` 会解释首轮选择、难度评估和最�
 若外层等待超时或发现已有重 OCR 子任务，`ocr_smart.ps1` 会返回短 JSON，例如 `status=client_timeout`
 或 `status=active_localocr_task`，并给出 `recommendation=do_not_blindly_retry`。
 如果刚改过 `model_profiles.json` 或 adapter，先重启 LocalOCR API 再验收，避免常驻进程继续使用旧 registry。
+
+坐标契约：JSON 的 `bbox` 保持历史形状，新增 `rect`（`[x1,y1,x2,y2]`）、`polygon` 和
+`coordinate_space=image_pixels`。Structure 页面另外提供 `structure_details`（表格/公式/印章/区域的
+JSON-native 原始结果）、独立的 `text_lines`（`overall_ocr_res` 逐行结果）和 `excluded_regions`。
+Structure/VL 中的 `face/person/human/portrait/figure/image` 只按非文字区域标签排除，不执行人脸识别或身份判断。
+PDF 页面会标注 `rendered_pdf_pixels=true`、`render_scale=2.0`、`rendered_width`/`rendered_height`；这些坐标是
+渲染图像像素，不是原始 PDF 点坐标。
 
 资源策略：教练/批量 OCR 时可以保持 API 常驻以复用 PP-OCR；切换到 Ollama、本地大模型
 或其他重 GPU 工作负载前，调用 `release_resources.ps1` 或使用 `ocr_once.ps1 -StopAfter`。

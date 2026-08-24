@@ -17,7 +17,7 @@ from .objective_result import (
     write_objective_sidecar,
 )
 from .outputs import write_isolated_projections, write_outputs
-from .pdf_utils import render_pdf_to_files
+from .pdf_utils import rendered_pdf_page_metadata, render_pdf_to_files
 
 
 def _ocr_pdf_with_ocr_engine(pdf_path: Path, engine, tmp_dir: Path) -> dict:
@@ -28,6 +28,7 @@ def _ocr_pdf_with_ocr_engine(pdf_path: Path, engine, tmp_dir: Path) -> dict:
         r = engine.predict_image(str(img))
         for p in r.get("pages", []):
             p["page_index"] = i
+            p.update(rendered_pdf_page_metadata(img))
             pages.append(p)
     return {
         "engine": engine.engine_name,
@@ -47,6 +48,7 @@ def _ocr_pdf_with_vl(pdf_path: Path, engine, tmp_dir: Path) -> dict:
         r = engine.predict_image(str(img))
         for p in r.get("pages", []):
             p["page_index"] = i
+            p.update(rendered_pdf_page_metadata(img))
             pages.append(p)
     return {
         "engine": engine.engine_name,

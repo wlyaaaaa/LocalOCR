@@ -89,6 +89,12 @@ API 响应的每个 `results[]` 都包含 `route`，记录 `effective_engine`、
 `signals`、`confidence` 和 `model_id`；auto 首轮 OCR 还记录 `difficulty`、`initial_engine`、
 `escalated` 与必要时的 `escalation`，用于排障和缓存审计。
 
+坐标和结构输出采用加法式契约：旧 `bbox` 保留，所有新 block 增加 `rect`、`polygon` 和
+`coordinate_space=image_pixels`。Structure 页面保留 JSON-native `structure_details`，并把
+`overall_ocr_res` 逐行结果放在独立 `text_lines`，不与版面 blocks 混合；Structure/VL 的
+`face/person/human/portrait/figure/image` 标签进入 `excluded_regions`，不计入正文 OCR 文字。PDF 页面由 service 标注
+`rendered_pdf_pixels=true`、`render_scale=2.0` 和渲染宽高，明确坐标仍是渲染图像像素。
+
 每个完成结果还包含正交的客观结果字段：`objective_outcome` 为
 `text_detected`、`no_text_detected` 或 `indeterminate`；`execution.status` 单独表示
 `completed`、`failed`、`unsupported` 或 `corrupt`；`coverage.status` 表示完整、部分或未知覆盖；
