@@ -23,6 +23,7 @@ _NON_TEXT_LABELS = {
 DEFAULT_OPTIONS: dict[str, Any] = {
     "pipeline_version": PIPELINE_VERSION,
     "vl_rec_backend": "native",
+    "use_queues": False,
     "use_doc_orientation_classify": True,
     "use_doc_unwarping": True,
 }

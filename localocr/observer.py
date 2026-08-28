@@ -36,10 +36,13 @@ class ObserverProjection:
     def list_jobs(self, *, limit: int = 100) -> dict[str, Any]:
         observed_at = _as_utc(self._now())
         projected: list[dict[str, Any]] = []
+        bounded_limit = max(1, min(int(limit), 200))
         for manifest in self._read_manifests():
             job = _project_job(manifest, observed_at)
             if job is not None:
                 projected.append(job)
+        # Sort logical updates before limiting. Filesystem timestamp ties or
+        # restored files must not hide the actual newest registered job.
         projected.sort(
             key=lambda job: (
                 job["timing"]["updated_utc"] or "",
@@ -48,7 +51,6 @@ class ObserverProjection:
             ),
             reverse=True,
         )
-        bounded_limit = max(1, min(int(limit), 200))
         return {
             "schema": LIST_SCHEMA,
             "service": SERVICE,
@@ -60,7 +62,7 @@ class ObserverProjection:
         if not _JOB_ID_PATTERN.fullmatch(job_id):
             return None
         observed_at = _as_utc(self._now())
-        for manifest in self._read_manifests():
+        for manifest in self._read_manifests(job_id=job_id):
             if manifest.get("job_id") != job_id:
                 continue
             job = _project_job(manifest, observed_at)
@@ -74,12 +76,11 @@ class ObserverProjection:
             }
         return None
 
-    def _read_manifests(self) -> list[dict[str, Any]]:
+    def _read_manifests(self, *, job_id: str | None = None):
         try:
-            paths = list(self.job_dir.glob("*.json"))
+            paths = self.job_dir.glob(f"{job_id}*.json" if job_id else "*.json")
         except OSError:
-            return []
-        manifests: list[dict[str, Any]] = []
+            return
         for path in paths:
             try:
                 with path.open("rb") as stream:
@@ -90,8 +91,7 @@ class ObserverProjection:
             except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
             if isinstance(value, dict):
-                manifests.append(value)
-        return manifests
+                yield value
 
 
 def _project_job(manifest: dict[str, Any], observed_at: datetime) -> dict[str, Any] | None:
@@ -105,6 +105,8 @@ def _project_job(manifest: dict[str, Any], observed_at: datetime) -> dict[str, A
         if isinstance(raw_state, str)
         else ("unknown", "unknown")
     )
+    if state == "running":
+        stage = _safe_identifier(manifest.get("stage")) or stage
     started_at = _parse_utc(manifest.get("started_at"))
     updated_at = _parse_utc(manifest.get("updated_at"))
     elapsed_ms = _elapsed_ms(state, started_at, updated_at, observed_at)
@@ -115,12 +117,7 @@ def _project_job(manifest: dict[str, Any], observed_at: datetime) -> dict[str, A
         "stage": stage,
         "mode": _safe_identifier(manifest.get("engine")),
         "model": _safe_identifier(manifest.get("model_id")),
-        "progress": {
-            "status": "unavailable",
-            "completed": None,
-            "total": None,
-            "unit": None,
-        },
+        "progress": _page_progress(manifest),
         "timing": {
             "status": "available" if elapsed_ms is not None else "unavailable",
             "started_utc": _format_utc(started_at) if started_at is not None else None,
@@ -140,6 +137,13 @@ def _safe_identifier(value: Any) -> str | None:
     if isinstance(value, str) and _IDENTIFIER_PATTERN.fullmatch(value):
         return value
     return None
+
+
+def _page_progress(manifest: dict) -> dict:
+    completed, total = manifest.get("completed_pages"), manifest.get("total_pages")
+    valid = (type(completed) is int and type(total) is int and 0 <= completed <= total and total > 0)
+    return {"status": "available" if valid else "unavailable", "completed": completed if valid else None,
+            "total": total if valid else None, "unit": "page" if valid else None}
 
 
 def _parse_utc(value: Any) -> datetime | None:

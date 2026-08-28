@@ -15,8 +15,18 @@
 `--model <profile-id>` 或 Windows wrapper 的 `-Model <profile-id>`。新增或替换模型时，
 先新增 profile 和 adapter，再用样本图/PDF 做 smoke test；不要把模型名硬编码到
 `cli.py`、`server.py`、`service.py` 或 PowerShell wrapper 里。
-常驻 API 会缓存已加载的 registry 和模型实例；修改 profile 或 adapter 后，先执行
+API 缓存 registry；唯一工作进程热复用当前模型，切换模型会重建进程。修改 profile 或 adapter 后，先执行
 `stop_server.ps1` / `start_server.ps1` 或 `release_resources.ps1`，再做验收。
+
+VL 明确关闭 `use_queues`：本项目单文件、逐页调用，不需要上游为大量图片/多页输入提供的内部异步队列。
+这是运行方式适配，不替换或弱化模型；具体语义见 [PaddleX 官方说明](https://github.com/PaddlePaddle/PaddleX/blob/release/3.7/docs/pipeline_usage/tutorials/ocr_pipelines/PaddleOCR-VL.en.md)。
+
+普通 OCR 默认 `use_doc_unwarping=false`。真实平面 UI 截图在 UVDoc 开启时出现错读/裁切并触发不必要升级，
+关闭后主体文字及原图位置恢复；极小浅字仍可能误读，关键内容须回原图复核。
+弯曲纸张仍可通过明确的 profile 配置启用矫正，不把它当作所有图片的通用增强。
+VL 的 `cuda_module_loading=EAGER` 只在其 worker 内、任何 Paddle import/probe 前设置，并纳入 profile/缓存身份。
+这是本机原生 CUDA 路径的有界初始化选择，不修改整机环境或宣称所有输入都会更快；参见
+[NVIDIA 模块加载说明](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html)。
 
 ## 已下载模型（本地缓存：`/root/.paddlex/official_models/`）
 
@@ -30,7 +40,7 @@
 | 文档矫正(UVDoc) | `UVDoc` | ModelScope |
 | 文本行方向 | `PP-LCNet_x1_0_textline_ori` | ModelScope |
 
-- 触发方式：`PaddleOCR(ocr_version="PP-OCRv6", lang="ch", use_doc_orientation_classify=True, use_doc_unwarping=True, use_textline_orientation=True)`
+- 触发方式：`PaddleOCR(ocr_version="PP-OCRv6", lang="ch", use_doc_orientation_classify=True, use_doc_unwarping=False, use_textline_orientation=True)`
 - 源码确认：`paddleocr/_pipelines/ocr.py:357` — lang=ch + PP-OCRv6 → medium 模型
 
 ### PaddleOCR-VL-1.6（PDF/合同/论文/表格/公式/多栏复杂文档）
@@ -69,7 +79,8 @@
 ## 离线运行
 
 模型下载后落在 `/root/.paddlex/official_models/`，PaddleOCR 启动时检测到本地缓存即不再联网。
-预热脚本：`scripts/download_models.py`（对三类引擎各跑一次预热推理）。
+预热入口：`scripts/run_in_wsl.sh scripts/download_models.py --allow-heavy`。
+它对三个现有 profile 串行预热，沿用生产租约、期限、内存和进程回收，不同时常驻三套模型；不是普通健康检查。
 
 ## 不使用的模型（需求 9）
 

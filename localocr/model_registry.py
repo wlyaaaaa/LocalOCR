@@ -53,6 +53,8 @@ def load_model_profiles(path: str | Path | None = None) -> ModelRegistry:
         )
         if profile.engine not in VALID_ENGINE_KEYS:
             raise ValueError(f"model profile {profile.id!r} has invalid engine {profile.engine!r}")
+        if profile.options.get("cuda_module_loading") not in {None, "LAZY", "EAGER"}:
+            raise ValueError(f"model profile {profile.id!r} has invalid cuda_module_loading")
         if profile.id in profiles:
             raise ValueError(f"duplicate model profile id: {profile.id}")
         profiles[profile.id] = profile
@@ -133,11 +135,14 @@ def get_engine(model_ref: str, device: str = "gpu:0"):
     module_name, class_name = profile.adapter.split(":", 1)
     module = importlib.import_module(module_name)
     engine_cls = getattr(module, class_name)
+    options = dict(profile.options)
+    # Worker-owned CUDA initialization is not a PaddleOCR constructor argument.
+    options.pop("cuda_module_loading", None)
     return engine_cls(
         device=device,
         profile_id=profile.id,
         model_name=profile.display_name,
         engine_name=profile.result_engine_name,
         pipeline_version=profile.pipeline_version,
-        options=dict(profile.options),
+        options=options,
     )

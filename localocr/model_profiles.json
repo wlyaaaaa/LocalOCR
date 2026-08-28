@@ -25,7 +25,7 @@
         "ocr_version": "PP-OCRv6",
         "lang": "ch",
         "use_doc_orientation_classify": true,
-        "use_doc_unwarping": true,
+        "use_doc_unwarping": false,
         "use_textline_orientation": true
       }
     },
@@ -49,6 +49,8 @@
       "options": {
         "pipeline_version": "v1.6",
         "vl_rec_backend": "native",
+        "cuda_module_loading": "EAGER",
+        "use_queues": false,
         "use_doc_orientation_classify": true,
         "use_doc_unwarping": true
       }

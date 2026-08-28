@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -71,7 +70,6 @@ def make_screenshot():
 
 def make_scan_pdf():
     """2. 扫描风 PDF（多页中文段落，带轻微倾斜模拟扫描）"""
-    import pypdfium2 as pdfium
     pages = []
     paras1 = [
         "中华人民共和国民法典合同编相关条款节选",
@@ -156,7 +154,6 @@ def make_formula():
     img = Image.new("RGB", (900, 700), (255, 255, 255))
     f = load_font(26)
     fF = load_font(24)
-    d = ImageDraw.Draw(img)
     draw_text(img, (40, 30), "机器学习常用损失函数", f, fill=(20, 20, 20))
     lines = [
         "一、均方误差（MSE）用于回归任务：",

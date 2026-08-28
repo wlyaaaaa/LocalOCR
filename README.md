@@ -5,7 +5,7 @@
 
 ## 特性
 
-- **中文优先**：默认 PP-OCRv6_medium 检测+识别，方向检测 / 文档矫正 / 文本行旋转纠正全开。
+- **中文优先**：默认 PP-OCRv6_medium 检测+识别，保留方向检测和文本行旋转纠正；普通截图/平面扫描默认不做 UVDoc 形变矫正，避免把原本清晰的文字和坐标拉坏。
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
 - **Smart Router v3 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
@@ -17,9 +17,9 @@
   JSON 在保留旧 `bbox` 的同时增加 `rect` / `polygon` / `coordinate_space=image_pixels`；Structure 结果另保留
   JSON-native `structure_details`、独立 `text_lines` 和非文字区域 `excluded_regions`。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
-- **常驻本地 API**：`start_server.ps1` 启动后 PP-OCR 常驻内存；VL/PDF 长任务由隔离子进程执行，适合 Codex/脚本频繁调用且避免 Web 服务被超大模型拖垮。
+- **可恢复的本地 API**：API 不加载 Paddle；所有模型由一个受监督的工作进程运行。同模型热复用，换模型重建；执行期限、取消、租约丢失和服务退出都会结束工作进程树。
 - **任务级缓存/去重**：API 会按源文件、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
-- **Codex 防卡入口**：`ocr_smart.ps1` 先做轻量分流和后台任务探测，再用外层超时包住 `ocr_once.ps1`，避免 PowerShell 长时间占住 AI 回合。
+- **Codex 防卡入口**：`ocr_smart.ps1` 以 `/health.active_jobs` 判断忙碌，保留 HTTP 错误正文与任务定位；不再以进程名探测代替任务状态。默认整个请求执行期限 300 秒，默认调用端等待 330 秒。
 
 ## 环境
 
@@ -27,19 +27,19 @@
 |---|---|
 | OS（运行） | WSL2 Ubuntu 24.04 LTS |
 | GPU | RTX 5080 / 5090D（Blackwell，sm_120，CUDA 12.9 原生） |
-| PaddlePaddle | 3.3.1 GPU，cu129 构建wheel 自带 CUDA/cuDNN/NCCL） |
+| PaddlePaddle | 3.3.1 GPU，cu129 构建（wheel 自带 CUDA/cuDNN/NCCL） |
 | PaddleOCR | 3.7.0 |
 | Python | 3.12（WSL venv） |
 
-> 为何不用 Windows 原生：Paddle 官方 Windows GPU wheel 仅 cu118/cu126，不含 sm_120 cubin，
-> 在 Blackwell 上不可靠。Linux cu129 wheel 原生支持 sm_120。详见 `docs/design-spec.md`。
+> 当前支持并实机验证的是 Linux cu129 wheel，包含 sm_120；不与 Windows 或 CPU wheel 混装。
+> 详见 [当前架构](docs/ARCHITECTURE.md)。
 
 ## AI / Codex 默认入口
 
 给 AI 助手调用时，默认先用 bounded smart wrapper，不要直接拉长时间阻塞 PowerShell：
 
 ```powershell
-.\ocr_smart.ps1 "E:\path\file-or-folder" -Engine auto -OuterTimeoutSec 120 -TimeoutSec 3600 -StartupTimeoutSec 600
+.\ocr_smart.ps1 "E:\path\file-or-folder" -Engine auto -ExecutionTimeoutSec 300
 ```
 
 默认决策：
@@ -63,17 +63,19 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 
 # 改过 model_profiles.json 或 adapter 后，再重启 API 做一个小图 smoke
 .\stop_server.ps1
-.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -OuterTimeoutSec 180 -StartupTimeoutSec 900
+.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
 ```
 
 常规验收不要加 `-StopAfter`；它会释放常驻服务并让下一次 OCR 冷启动，可能把短检查拖到 1-2 分钟。只有要切换到 Ollama、本地大模型、游戏或其他重 GPU 任务前，才用 `release_resources.ps1` / `-StopAfter`。
 
 ## 常见误用
 
+- 所有服务/Windows入口只允许 `127.0.0.1`；这不是带认证的远程 OCR API，不接受任意 `HostAddress`。
 - `cache_status=cache_hit` 是成功复用已校验的输出，不是失败；直接读 `results[].output_files`。其中 `objective` sidecar 是客观结果的校验依据。
+- 高平均分、`quality=sufficient` 或 hash 校验通过不代表每行文字都正确。极小/浅色关键文字要回原图核对；任务允许原生视觉时，可另附绑定原图 hash 与区域的视觉校正，明确区分其与未改写的模型输出。看不清仍保留未知，不用反复换参数制造“正确”。
 - `results[].objective_outcome=indeterminate` 表示引擎完成但没有足够证据判断无文字；它不是 `no_text_detected`，也不等价于图片/事件无意义。`execution_status=corrupt|unsupported|failed`、`coverage.status=partial|unknown` 和 `quality.status=low_confidence|unknown` 要分别处理。只有 sidecar 的 `evidence.verification_status=verified` 才可作为持久化负向证据。
-- `exit code 124` 通常是外层 shell / Codex 等待超时，不等于 OCR 已失败；先查后台 `localocr.cli` / `vl_subprocess` / `structure_subprocess`、`/health`、`/jobs/<job_key>` 和输出目录。
-- `/health.loaded_engines` 或 `loaded_models` 没有 `vl` / `structure` 不代表不可用；VL 和 Structure 由隔离子进程运行。
+- 调用端超时不等于服务端失败；先查 `/health.active_jobs`、返回的 `job_key` 和 `/jobs/<job_key>`，不要盲目重发。服务端到执行期限会返回 504 并清理工作进程。
+- `/health.gpu_status=not_probed` 只表示新 API 尚未执行带租约的 GPU 探针；`loaded_models` 表示当前唯一热工作进程中的模型，不是可用模型清单。
 - `start_server.ps1` 报 `non-LocalOCR service` 时，说明端口上是别的服务；不要继续等冷启动。查询 `E:\PCConfig` 的端口注册并确认空闲端口后，再显式传入 `-Port`。`18666` 属于 ChineseASR，不是 LocalOCR 的回退端口。
 - Word / PPT / Excel / 数字 PDF 不应先丢给 OCR；先用原生文档/PDF解析，只有扫描件、截图、拍照页、嵌入图片文字才用 LocalOCR。
 
@@ -105,19 +107,21 @@ wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 
 ```bash
 cd /mnt/e/Projects/Tools/LocalOCR
-scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine auto --out-dir outputs
+scripts/run_in_wsl.sh -m localocr.cli "图片或文件夹或pdf" --engine auto --out-dir outputs
 ```
 
 参数：
+
 - `--engine auto|ocr|vl|structure`：`auto`（默认）按类型自动分流；`ocr` 强制 PP-OCRv6_medium；`vl` 强制 VL-1.6；`structure` 强制 PP-StructureV3。
 - `--model <profile-id>`：指定具体模型 profile，例如 `ppocrv6-medium`、`paddleocr-vl-1.6` 或 `pp-structure-v3`；不传则使用该 engine 的默认 profile。
 - `--out-dir`：输出目录，默认 `outputs`。
 - `--recursive`：输入为文件夹时递归子目录。
+- `--timeout-sec`：整个请求执行期限，默认 300 秒，上限 7200 秒。
 
 **方式 C — 常驻本地 API（推荐给 AI 助手/高频 OCR）**：
 
 ```powershell
-# Codex / AI 助手默认入口：外层最多等待 120 秒，实际 OCR/VL 由 API Smart Router v3 决定
+# Codex / AI 助手默认入口：所有引擎共享可取消、有期限的执行路径
 .\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
 
 # 只做轻量预检，不提交 OCR 任务
@@ -132,8 +136,8 @@ scripts/run_in_wsl.sh python -m localocr.cli "图片或文件夹或pdf" --engine
 # 指定具体模型 profile；适合未来新增/切换模型时做验收
 .\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -Model ppocrv6-medium
 
-# VL / PDF / 公式等长任务可显式放宽客户端等待时间
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine vl -TimeoutSec 3600
+# 确实较长的任务：执行期限与客户端等待分别设置
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
 
 # 表格/版面块/公式/印章等需要结构化坐标和块类型时，用 PP-StructureV3
 .\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
@@ -157,14 +161,14 @@ Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>"
 HTTP 入口：
 
 - `GET http://127.0.0.1:18665/health`
+- `POST http://127.0.0.1:18665/jobs/<job_key>/cancel`
 - `GET http://127.0.0.1:18665/jobs/<job_key>`
 - `POST http://127.0.0.1:18665/ocr/path`
 - `POST http://127.0.0.1:18665/ocr/file`
 
-说明：`/health` 的 `loaded_engines` 只表示 API 进程内已缓存的轻量 OCR 引擎。`engine=auto` 会先经过
-Smart Router v3；`results[].route` 会解释首轮选择、难度评估和最终引擎。`engine=vl` / `engine=structure`
-会按请求启动隔离子进程完成识别，结果仍通过 API 返回并写入输出目录。
-新字段 `loaded_models` 返回 API 进程内已加载的具体 profile id。
+说明：`/health` 的 `active_jobs` 给出任务、阶段、工作进程和期限，`loaded_engines` 表示当前工作进程中的模型。`engine=auto` 会先经过
+Smart Router；`results[].route` 会解释首轮选择、难度评估和最终引擎。所有模型共享同一受监督工作进程协议，
+同模型热复用、换模型重建；`loaded_models` 返回该工作进程中的具体 profile id。
 
 `/ocr/path` 请求示例：
 
@@ -174,12 +178,13 @@ Smart Router v3；`results[].route` 会解释首轮选择、难度评估和最�
   "engine": "ocr",
   "model": "ppocrv6-medium",
   "recursive": false,
-  "write_outputs": true
+  "write_outputs": true,
+  "timeout_sec": 300
 }
 ```
 
 `ocr_smart.ps1` 成功时返回兼容 `ocr_once.ps1` 的 API JSON，并附加 `smart` 路由元数据；每个输入文件的输出路径位于
-`results[].output_files`，默认写到 `outputs/api/<文件名>.txt|.md|.json`。最终路由看
+`results[].output_files`，规范路径带有请求 hash；无 hash 的同名文件只是兼容展示。最终路由看
 `results[].route.effective_engine`、`results[].route.reason`、`results[].route.signals` 和
 `results[].route.confidence`；自动首轮 OCR 还会返回 `route.initial_engine`、`route.escalated` 和
 `route.difficulty`。`smart.preview_*` 只是 PowerShell 预检预测。API 还会给每个写盘任务返回
@@ -215,12 +220,13 @@ localocr/        源码
   job_registry.py 文件型任务缓存、去重和 job 状态 manifest
   outputs.py     TXT/MD/JSON 兼容投影输出
   objective_result.py  客观结果 schema、负向证据和 cache sidecar 校验
-  service.py     常驻服务层，缓存轻量 OCR，引擎重任务走隔离子进程，并接入任务级缓存
+  service.py     轻量协调、任务快照、期限和原子提交
+  runtime.py     单个可终止的热工作进程；所有模型共享监督协议
   server.py      FastAPI 本地 API，提供 health/job/OCR 端点
   gpu_probe.py   GPU 强制探针
 scripts/         安装/下载/WSL 运行脚本
-tests/           合成样本与测试脚本，见 TEST_REPORT.md
-docs/            架构、模型清单、故障排除、设计文档
+tests/           合成样本与回归测试；重型报告按需在本地生成
+docs/            当前架构、模型清单、故障排除
 start.bat/ps1    Windows 一次性 CLI 入口
 start_server.ps1 Windows API 启动入口
 ocr_smart.ps1    Windows Codex/AI 防卡智能入口
@@ -234,10 +240,10 @@ stop_server.ps1  Windows API 停止入口
 - [架构说明](docs/ARCHITECTURE.md)
 - [模型清单与来源](docs/MODELS.md)
 - [故障排除](docs/TROUBLESHOOTING.md)
-- [设计文档](docs/design-spec.md)
 - [AI 助手快速上手](docs/QUICKSTART_FOR_AI.md)
-- [测试报告](tests/TEST_REPORT.md)
 
-## 测试结果摘要
+## 验证与报告
 
-见 `tests/TEST_REPORT.md`。包含实际使用模型、GPU 生效情况、显存占用、速度与输出片段。
+普通回归不加载模型。明确运行 `tests/run_tests.py --allow-heavy` 后，报告写入本地
+`tests/TEST_REPORT.md`，不再把旧报告或实施计划当作现行结果提交；历史保留在 Git。
+真实需求仍须回读实际结果与原件，不能用测试通过、模型加载成功或高平均分替代验收。

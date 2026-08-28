@@ -1,124 +1,95 @@
 # 架构说明
 
-## 运行架构
+## 执行边界
 
-```
-Windows (E:\Projects\Tools\LocalOCR)                WSL2 Ubuntu 24.04
-┌─────────────────┐                 ┌──────────────────────────┐
-│ start.bat/ps1   │  拖入文件/参数   │ run_in_wsl.sh            │
-│ (Windows入口)   │ ──────────────▶ │ (设 LD_LIBRARY_PATH 等)  │
-└─────────────────┘                 │   ↓                      │
-                                    │ venv python -m localocr   │
-                                    │   cli.py                 │
-                                    │   ├─ gpu_probe.py        │
-                                    │   ├─ model_registry.py   │
-                                    │   ├─ model_profiles.json │
-                                    │   ├─ router.py           │
-                                    │   ├─ smart_router.py     │
-                                    │   ├─ service.py          │
-                                    │   ├─ server.py           │
-                                    │   ├─ job_registry.py     │
-                                    │   ├─ engines/            │
-                                    │   │   ├─ ppocrv6.py      │
-                                    │   │   ├─ vl.py           │
-                                    │   │   └─ structure.py    │
-                                    │   ├─ pdf_utils.py        │
-                                    │   └─ outputs.py          │
-                                    │        ↓                 │
-                                    │   PaddlePaddle GPU cu129 │
-                                    │        ↓                 │
-                                    │   /usr/lib/wsl/lib/      │
-                                    │   libcuda.so.1 (驱动透传) │
-                                    └──────────────────────────┘
-                                              ↓
-                                    ┌──────────────────────────┐
-                                    │  RTX 5080/5090D (sm_120) │
-                                    └──────────────────────────┘
+```text
+Windows wrapper / CLI
+  → API/CLI coordinator：输入、期限、任务状态、输出提交
+  → LocalGpuBroker：全机 GPU 排他租约
+  → 一个可终止的 warm worker：GPU 探针、模型、PDF 渲染、推理
+  → 请求绑定的输出文件 + 最后提交的 job manifest
 ```
 
-## 模块职责
+不新增服务、队列或数据库。API 不导入 Paddle，也不持有模型；`runtime.py` 用私有 Pipe
+与一个 spawn 工作进程通信。同模型连续请求热复用，切换模型时结束旧进程再创建新进程，
+避免多套模型和 native allocator 长期叠加。CLI 使用同一 `OCRService`，不另维护一条推理路径。
 
-| 模块 | 职责 |
+## 任务与资源生命周期
+
+- 整个请求默认执行期限 300 秒，可用 API `timeout_sec`、CLI `--timeout-sec` 或
+  wrapper `-ExecutionTimeoutSec` 明确调整，最大 7200 秒；目录内的每个文件不会重置期限。
+- 服务只允许一个在途计算请求。相同已完成请求可复用哈希有效的缓存；计算忙碌时返回
+  HTTP 409、`active_localocr_task` 与任务定位，不隐式排入第二个队列。
+- API 持有短 TTL 租约并续租；worker 在 GPU 探针和模型导入前验证父租约的真实 token。
+  不再接受“父已持租约”的未验证布尔标志。续租失败必须传播到监督器。
+- deadline、取消、租约丢失、worker 崩溃和服务关闭都会停止进程组。WSL worker 的
+  parent-death 保护和同组小 guard 同时覆盖父进程硬退出及普通子孙进程。
+- RSS 上限为服务及其子进程合计 30 GB，不是整机限制，也不是 GPU VRAM 指标。
+  超限只结束自己的工作进程，保留其它程序。OOM 等 native 错误明确失败。
+- `/health` 返回 `active_jobs`、阶段、PID、期限、当前模型与服务内存峰值。
+  `gpu_status=not_probed` 表示 API 就绪但尚未在合法租约内执行 GPU 探针，不冒充 GPU 已验证。
+
+Windows 启动器仅把显式允许的 NUL/独立日志句柄传给长驻 `wsl.exe`，不能继承调用者的
+输出管道。没有 PowerShell scriptblock 异步流回调。停止入口校验目标端口、服务 PID、
+启动时间、命令及工作目录，再结束该服务子树；不按模糊进程名批量终止。
+
+## 输入、状态与输出
+
+选定文件先生成源哈希，然后只为该文件创建临时不可变输入快照。快照哈希和识别完成时
+原件哈希必须一致；原件变化时不发布结果。临时快照和 PDF 页属于该请求，退出时清理。
+
+`JobRegistry` 仍使用 `_server/jobs/<job_key>.json` 与原子 `.lock`。锁记录 execution id、
+PID 和进程启动时间；启动时可以立即恢复已死亡/被复用 PID 的任务，不等待 24 小时。
+活进程的锁不会因年龄而被抢占。进度仅更新现有 manifest，不新增状态数据库。
+目录内一个 `.job-registry.guard` 仅串行化元数据提交；每个 claim/terminal 都校验 execution id，
+Windows 不会在锁住数据文件时重开/删除它。终态落盘失败保留可恢复锁，协调者明确 not-ready。
+`write_files=False` 不落任务或输出文件。
+
+`job_key` 绑定源路径/hash/大小、请求语义、规范化设备、路由策略、模型 profile、配置和输出目录。
+所有输出采用临时文件加原子替换，completed manifest 是最终提交点。缓存只依赖
+请求 hash 隔离的 canonical 投影和 objective sidecar；同名 stem 的兼容展示文件被覆盖
+不会使其它请求失去有效缓存。
+
+auto 首轮 OCR 有结果而 VL 升级失败时，初步文字保存在明确的 `partial/<job_key>` 路径，
+失败 manifest/HTTP 回应给出 `partial_output_files`；它不作为成功缓存或已完成 VL 的证明。
+
+## 模型和结果合同
+
+默认 profile 仍是 `ppocrv6-medium`、`paddleocr-vl-1.6`、`pp-structure-v3`。
+`engine=auto` 用低成本规则选首轮模型，普通图片/扫描件先 OCR，明确困难结果再升级 VL；
+显式 `engine` 或 `model` 保持调用者选择，结构化任务使用 `structure`。
+VL 的 `use_queues=False` 与当前单文件/逐页调用匹配，避免不必要的内部异步队列；模型能力不降级。
+安装预热也复用同一个监督路径和 profile，需显式 `--allow-heavy`，不在安装脚本另留无租约的 GPU 探针。
+
+JSON 保留 `bbox`、`rect`、`polygon`、阅读顺序、表格/公式/印章和结构细节。
+PDF 坐标明确是渲染像素，并记录 `render_scale` 与尺寸，不伪装为原 PDF 点坐标。
+`face/person` 等非文字区域只记录区域标签，OCR 不作人脸身份识别。
+
+`media.objective-result.v1` 继续区分 `text_detected`、`no_text_detected`、`indeterminate`。
+空文本不能证明没有文字；负向结论必须有完整覆盖、质量与独立证据，且 source/request/model/config
+以及所有输出 size/hash 绑定有效。失败、低置信度与部分覆盖不被改写成成功。
+
+## 入口与模块
+
+| 模块/入口 | 责任 |
 |---|---|
-| `gpu_probe.py` | 启动时强制验证 GPU 可用（sm_120+、算子执行），失败即退出，不回退 CPU |
-| `model_profiles.json` | 声明 profile id、默认模型、engine 族、adapter、能力标签和 Paddle 初始化参数 |
-| `model_registry.py` | 读取 profile，解析 `ocr/vl/structure` 默认别名，按 `--model` 创建具体 adapter |
-| `router.py` | 文件扩展名判断和输入文件收集基础工具 |
-| `smart_router.py` | Smart Router v3 的低成本预路由；在不加载模型的前提下，用扩展名、文件名关键词和显式参数生成可解释 `auto` 首轮路由 |
-| `difficulty.py` | 对 auto 首轮 PP-OCRv6 结果计算空文本、均值和低置信块占比；达到保守阈值时请求本地 VL 二次识别 |
-| `job_registry.py` | 文件型任务登记、缓存命中、运行中去重和 `job_key` 状态 manifest |
-| `service.py` | 常驻 OCR 运行时，按具体 profile 缓存轻量模型；VL/Structure 重模型使用隔离子进程；写盘任务先经过 Smart Router v3 和 job registry |
-| `server.py` | FastAPI 本地 API，提供 `/health`、`/jobs/{job_key}`、`/ocr/path`、`/ocr/file`，请求体支持 `model` |
-| `engines/ppocrv6.py` | PP-OCRv6 adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
-| `engines/vl.py` | PaddleOCR-VL adapter，接收 profile 注入的模型名、pipeline 和初始化参数 |
-| `engines/structure.py` | PP-StructureV3 adapter，接收 profile 注入的结构化管线参数并归一成统一 blocks 输出 |
-| `pdf_utils.py` | PDF→PNG（pypdfium2），供逐页送引擎 |
-| `outputs.py` | 统一产出兼容 TXT/Markdown/JSON 投影，保留坐标/置信度/表格/阅读顺序 |
-| `objective_result.py` | 产出 `media.objective-result.v1` 客观结果、独立负向证据和按请求 hash 隔离的 sidecar；cache hit 重验 schema/size/hash/身份 |
-| `cli.py` | argparse 入口，编排探针→收集→路由→识别→输出 |
+| `ocr_smart.ps1` / `ocr_once.ps1` | health-only 预检、HTTP、期限、结构化错误和 job 定位 |
+| `server.py` / `cli.py` | 薄调用入口；共同使用 `OCRService` |
+| `service.py` | 单在途协调、快照、路由、提交与取消 |
+| `runtime.py` | warm worker、模型切换、期限/失联/崩溃/内存监督 |
+| `gpu_broker.py` | 全机租约客户端与父 token 验证 |
+| `job_registry.py` | 原子任务锁、进度、终态与缓存校验 |
+| `model_registry.py` / `model_profiles.json` | profile 和配置，不把具体模型写死在 wrapper |
+| `engines/` / `pdf_utils.py` | 模型 adapter 与临时逐页渲染 |
+| `outputs.py` / `objective_result.py` | 原子投影、客观结果和哈希绑定 |
 
-## 关键环境变量
-
-| 变量 | 作用 |
+| HTTP 入口 | 结果 |
 |---|---|
-| `LD_LIBRARY_PATH=/usr/lib/wsl/lib` | 让 Paddle 找到 WSL 透传的 libcuda.so |
-| `PADDLE_PDX_MODEL_SOURCE=modelscope` | 国内用 ModelScope 下载模型（HuggingFace 不可达）|
-| `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true` | 跳过 HuggingFace 连通性检查（否则全部判失败）|
-| `PADDLE_PDX_DISABLE_DEV_MODEL_WL=true` | 跳过设备-模型白名单检查 |
-| `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` | 关闭 oneDNN（GPU 模式不需要）|
+| `GET /health` | API 身份、active_jobs、worker/模型与资源状态 |
+| `GET /jobs/{job_key}` | 持久任务状态及 cache 可用性 |
+| `POST /jobs/{job_key}/cancel` | 取消准确的在途任务；不存在/已终态不影响其它任务 |
+| `POST /ocr/path` / `POST /ocr/file` | 路径/上传识别；上传识别也不阻塞异步健康接口 |
 
-均在 `scripts/run_in_wsl.sh` 中设置。
-
-## 本地 API
-
-`start_server.ps1` 通过 Windows `Start-Process` 启动隐藏的 `wsl.exe` 会话，并在
-其中以前台进程运行 `python -m localocr.server`，默认只监听 `127.0.0.1:18665`。
-服务启动时执行 GPU 探针；PP-OCR 图片请求在 API 进程内加载并复用模型实例。
-PaddleOCR-VL 和 PP-StructureV3 请求通过隔离子进程执行，避免重模型与 Uvicorn
-生命周期、信号处理或显存释放互相影响。Windows 侧启动进程 PID 记录在
-`_server/wsl-server.pid`，`stop_server.ps1` 停止 WSL 内服务后会清理该文件。
-API 父进程持有 LocalGpuBroker 租约并覆盖隔离子进程的完整生命周期；子进程收到内部
-`--broker-lease-held-by-parent` 标记时不重复申请租约。直接 CLI 不带该标记，仍必须自行申请 Broker。
-`loaded_engines` 保留兼容字段，返回已缓存 profile 的 engine 族；`loaded_models`
-返回具体 profile id，供换模型和验收时确认。
-
-`engine=auto` 先经过 Smart Router v3。显式 `engine` 和 `model` 永远优先；`structure`
-不参与自动路由。普通图片和普通扫描 PDF / 表单先走 OCR；空文本或明显低置信结果在同一任务中升级到隔离 VL。文件名含 `table`、`formula`、
-`layout`、`multi`、`论文`、`公式`、`表格`、`多栏`、`课件` 等复杂版面信号时走 VL。
-API 响应的每个 `results[]` 都包含 `route`，记录 `effective_engine`、`reason`、
-`signals`、`confidence` 和 `model_id`；auto 首轮 OCR 还记录 `difficulty`、`initial_engine`、
-`escalated` 与必要时的 `escalation`，用于排障和缓存审计。
-
-坐标和结构输出采用加法式契约：旧 `bbox` 保留，所有新 block 增加 `rect`、`polygon` 和
-`coordinate_space=image_pixels`。Structure 页面保留 JSON-native `structure_details`，并把
-`overall_ocr_res` 逐行结果放在独立 `text_lines`，不与版面 blocks 混合；Structure/VL 的
-`face/person/human/portrait/figure/image` 标签进入 `excluded_regions`，不计入正文 OCR 文字。PDF 页面由 service 标注
-`rendered_pdf_pixels=true`、`render_scale=2.0` 和渲染宽高，明确坐标仍是渲染图像像素。
-
-每个完成结果还包含正交的客观结果字段：`objective_outcome` 为
-`text_detected`、`no_text_detected` 或 `indeterminate`；`execution.status` 单独表示
-`completed`、`failed`、`unsupported` 或 `corrupt`；`coverage.status` 表示完整、部分或未知覆盖；
-`quality.status` 表示 `sufficient`、`low_confidence` 或 `unknown`。空 block、空文本或零字节不能证明
-`no_text_detected`。规范负向证据必须是非空 canonical artifact，并绑定 raw hash、processor/model/version、
-config/request hash、实际页/区域、排除范围、阈值和不确定性。PDF 的 `media_kind` 仍为 `image`，容器类型另记为
-`source_format=pdf`。内存结果的 `evidence.verification_status` 为 `not_persisted`；只有写入 sidecar 后才提升为 `verified`。
-旧 `<stem>.txt|md|json` 仅作为展示兼容投影；写盘任务同时生成带 request hash 的 canonical 投影和
-`*.objective.json` sidecar，后者与 canonical 投影一起参与 cache identity 校验。
-
-写盘 OCR 请求在推理前会登记到 `_server/jobs/<job_key>.json`，并用同名 `.lock`
-做原子 claim。`job_key` 由源文件路径、文件内容 hash、请求语义、路由策略、模型 profile、
-engine 和输出目录决定；因此 auto、显式 engine 与显式 model 不会错误复用彼此的结果。
-同一任务完成且所有输出文件均有非空 `size_bytes`/`sha256`，且 objective sidecar 通过 schema、尺寸、hash、source/request/model/config identity
-重验时返回 `cache_status=cache_hit`；同一任务仍在运行时返回
-`status=active_localocr_task` 和 `recommendation=do_not_blindly_retry`，避免客户端超时后再次拉起相同 OCR。
-
-资源释放入口有两层：`ocr_once.ps1 -StopAfter` 适合一次性 OCR 后立即关停；
-`release_resources.ps1` 适合 Ollama、本地大模型、游戏或其他重 GPU 工作负载启动前
-统一释放 LocalOCR API 与派生 VL 子进程。
-
-| 端点 | 作用 |
-|---|---|
-| `GET /health` | 返回 GPU 摘要和已加载引擎 |
-| `GET /jobs/{job_key}` | 返回 job manifest、运行状态和缓存可用性 |
-| `POST /ocr/path` | 识别 Windows/WSL 路径，支持文件或文件夹 |
-| `POST /ocr/file` | 上传单个文件并识别 |
+HTTP 409 表示忙碌/冲突，503 表示 broker 不可用或租约丢失，504 表示执行期限，
+400/422 表示请求参数，404 表示原件/任务不存在，500 表示实际运行异常。
+错误的 `error_code`、`detail` 和已有 `job_key` 位于 JSON 顶层，Windows wrapper 原样保留。

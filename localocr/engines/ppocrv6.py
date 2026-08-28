@@ -12,13 +12,13 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "ocr_version": PIPELINE_VERSION,
     "lang": "ch",
     "use_doc_orientation_classify": True,
-    "use_doc_unwarping": True,
+    "use_doc_unwarping": False,
     "use_textline_orientation": True,
 }
 
 
 class PPOCRv6Engine:
-    """PP-OCRv6_medium 检测+识别引擎。方向检测/文档矫正/文本行旋转全开（需求 5）。"""
+    """PP-OCRv6 detection and recognition; do not deform flat screenshots by default."""
 
     def __init__(
         self,

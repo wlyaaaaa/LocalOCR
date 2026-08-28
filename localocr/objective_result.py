@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Objective media-result semantics and the cache-verifiable sidecar.
 
 The legacy TXT/Markdown/JSON projections are intentionally left intact.  This
 module adds a small, versioned result contract so an empty OCR block list is
 not silently interpreted as proof that the image contains no text.
 """
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -370,7 +370,9 @@ def write_objective_sidecar(
     # Text mode rewrites LF to CRLF on Windows, which made the returned hash
     # describe the pre-write string instead of the persisted artifact bytes.
     # Write and hash the exact same UTF-8 bytes on every platform.
-    path.write_bytes(payload_bytes)
+    from .outputs import atomic_write
+
+    atomic_write(path, payload_bytes)
     return path, hashlib.sha256(payload_bytes).hexdigest()
 
 

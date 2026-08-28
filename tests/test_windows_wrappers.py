@@ -10,6 +10,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _decode_process_output(raw: bytes) -> str:
+    if not raw:
+        return ""
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", errors="strict").lstrip("\ufeff")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig", errors="strict")
+    for encoding in ("utf-8", "gb18030", "utf-16-le", "utf-16-be"):
+        try:
+            decoded = raw.decode(encoding, errors="strict")
+        except UnicodeDecodeError:
+            continue
+        if "\x00" not in decoded or encoding.startswith("utf-16"):
+            return decoded
+    # Preserve undecodable bytes in diagnostics instead of dropping them.
+    return raw.decode("utf-8", errors="surrogateescape")
+
+
 class WindowsWrapperTest(unittest.TestCase):
     def _windows_script_path(self, path: Path) -> str:
         if os.name == "nt":
@@ -36,20 +54,24 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("WaitOne([TimeSpan]::FromSeconds($StartupTimeoutSec))", script)
         self.assertIn("AddSeconds($StartupTimeoutSec)", script)
 
-    def test_start_server_waits_for_existing_starting_process(self) -> None:
+    def test_start_server_rechecks_health_while_holding_startup_mutex(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("function Get-LocalOcrProcess", script)
-        self.assertIn("Get-Process -Id $serverPid", script)
-        self.assertIn("API startup already in progress", script)
-        self.assertIn("startup timed out while existing process is still running", script)
+        self.assertIn("Get-LocalOcrHealth", script)
+        self.assertIn("System.Threading.Mutex", script)
+        self.assertIn("WaitOne", script)
+        self.assertIn("StartupTimeoutSec", script)
+        self.assertNotIn("Get-LocalOcrProcess", script)
 
     def test_start_server_fails_fast_on_non_localocr_health(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
 
         self.assertIn("Assert-LocalOcrHealthPayload", script)
+        self.assertIn("service", script)
+        self.assertIn("localocr", script)
+        self.assertIn("legacy_unknown", script)
+        self.assertIn("readiness_unknown", script)
         self.assertIn("non-LocalOCR service", script)
-        self.assertIn("Use -Port", script)
 
     def test_start_server_fails_fast_when_windows_cannot_bind_port(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
@@ -58,16 +80,36 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("TcpListener", script)
         self.assertIn("excluded port ranges", script)
 
-    def test_stop_server_cleans_api_vl_children_and_pid_file(self) -> None:
+    def test_start_server_uses_detached_ported_launcher(self) -> None:
+        script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Start-LocalOcrServerProcess", script)
+        self.assertIn("run_in_wsl.sh", script)
+        self.assertIn("--host", script)
+        self.assertIn("--port", script)
+        self.assertIn("wsl-launcher.log", script)
+        self.assertNotIn("Start-Process", script)
+
+    def test_stop_server_uses_verified_pid_start_identity_and_target_port(self) -> None:
         script = (ROOT / "stop_server.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("localocr.cli", script)
-        self.assertIn("_pdf_pages/api/vl_subprocess", script)
-        self.assertIn("_pdf_pages/api/structure_subprocess", script)
+        self.assertIn("server_pid", script)
+        self.assertIn("server_start_time", script)
+        self.assertIn("Get-ServerByPid", script)
+        self.assertIn("Assert-TargetOwnsPort", script)
+        self.assertIn("Test-WindowsPortOccupied", script)
+        self.assertIn("/root/localocr-venv/bin/python", script)
+        self.assertIn("psutil", script)
+        self.assertIn("GraceSec", script)
+        self.assertIn('"TERM"', script)
+        self.assertIn('"KILL"', script)
+        self.assertNotIn("pgrep", script)
+        self.assertNotIn("pkill", script)
         self.assertIn("wsl-server.pid", script)
         self.assertIn("Remove-Item", script)
         self.assertIn("$WslTimeoutSec", script)
         self.assertIn("WaitForExit", script)
+        self.assertIn('throw "[LocalOCR] Stop failed:', script)
 
     def test_ocr_once_can_release_api_after_request(self) -> None:
         script = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
@@ -75,18 +117,24 @@ class WindowsWrapperTest(unittest.TestCase):
         self.assertIn("[switch]$StopAfter", script)
         self.assertIn("stop_server.ps1", script)
         self.assertIn("finally", script)
-        self.assertIn("Write-Warning", script)
+        self.assertIn("cleanup_failed", script)
+        self.assertIn("resource_release_failed", script)
+        self.assertIn("ocr_result", script)
 
     def test_ocr_once_passes_startup_timeout_to_server(self) -> None:
         script = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")
 
         self.assertIn("[int]$StartupTimeoutSec = 600", script)
+        self.assertIn("[int]$ExecutionTimeoutSec = 300", script)
+        self.assertIn("timeout_sec = $ExecutionTimeoutSec", script)
         self.assertIn("-StartupTimeoutSec $StartupTimeoutSec", script)
 
     def test_release_resources_wrapper_calls_stop_server(self) -> None:
         script = (ROOT / "release_resources.ps1").read_text(encoding="utf-8")
 
         self.assertIn("stop_server.ps1", script)
+        self.assertIn("Resource release failed", script)
+        self.assertIn("try", script)
         self.assertIn("LocalOCR resources released", script)
 
     def test_ocr_smart_wrapper_exists(self) -> None:
@@ -109,12 +157,14 @@ class WindowsWrapperTest(unittest.TestCase):
             ],
             check=False,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=20,
         )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
+        stdout = _decode_process_output(completed.stdout)
+        stderr = _decode_process_output(completed.stderr)
+        self.assertEqual(completed.returncode, 0, stderr)
+        payload = json.loads(stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["status"], "triage_only")
         self.assertEqual(payload["route_reason"], "not_applicable_without_path")
@@ -133,19 +183,23 @@ class WindowsWrapperTest(unittest.TestCase):
             ],
             check=False,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=20,
         )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
+        stdout = _decode_process_output(completed.stdout)
+        stderr = _decode_process_output(completed.stderr)
+        self.assertEqual(completed.returncode, 0, stderr)
+        payload = json.loads(stdout)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "missing_path")
 
     def test_ocr_smart_finalizes_child_exit_state(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("$process.WaitForExit()", script)
+        self.assertIn("ReadToEndAsync", script)
+        self.assertIn("WaitForExit(5000)", script)
+        self.assertIn("Wait(1000)", script)
         self.assertIn("$process.Refresh()", script)
         self.assertIn("$ProgressPreference = 'SilentlyContinue'", script)
 
@@ -168,25 +222,27 @@ class WindowsWrapperTest(unittest.TestCase):
     def test_ocr_smart_has_outer_timeout_and_compact_timeout_json(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("[int]$OuterTimeoutSec = 120", script)
+        self.assertIn("[int]$OuterTimeoutSec = 330", script)
+        self.assertIn("[int]$ExecutionTimeoutSec = 300", script)
+        self.assertIn("-ExecutionTimeoutSec $ExecutionTimeoutSec", script)
         self.assertIn("WaitForExit($TimeoutSec * 1000)", script)
         self.assertIn("-TimeoutSec $OuterTimeoutSec", script)
         self.assertIn("client_timeout", script)
         self.assertIn("do_not_blindly_retry", script)
 
-    def test_ocr_smart_checks_active_vl_before_work(self) -> None:
+    def test_ocr_smart_uses_health_active_jobs_as_the_only_activity_source(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("Get-LocalOcrActiveTasks", script)
-        self.assertIn("[l]ocalocr[.]cli", script)
-        self.assertIn("[v]l_subprocess", script)
-        self.assertIn("[s]tructure_subprocess", script)
+        self.assertIn("active_jobs", script)
+        self.assertIn("health_active_jobs_unavailable", script)
         self.assertIn("active_localocr_task", script)
+        self.assertNotIn("pgrep", script)
 
-    def test_ocr_smart_active_task_probe_avoids_matching_itself(self) -> None:
+    def test_ocr_smart_does_not_infer_activity_from_process_names(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("[l]ocalocr[.]cli|[v]l_subprocess|[s]tructure_subprocess", script)
+        self.assertNotIn("Get-LocalOcrActiveTasks", script)
+        self.assertNotIn("Process.GetProcesses", script)
 
     def test_api_wrappers_accept_model_profile_override(self) -> None:
         once = (ROOT / "ocr_once.ps1").read_text(encoding="utf-8")

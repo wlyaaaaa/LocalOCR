@@ -1,6 +1,6 @@
 [project]
 name = "localocr"
-version = "0.1.0"
+version = "0.6.0"
 description = "Local high-quality Chinese OCR on RTX 5090D via PaddleOCR 3.7 + PaddlePaddle GPU cu129"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.116",
     "uvicorn[standard]>=0.35",
     "python-multipart>=0.0.20",
+    "psutil>=7.2,<8",
 ]
 
 [project.scripts]

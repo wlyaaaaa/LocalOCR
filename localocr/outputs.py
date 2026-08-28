@@ -1,20 +1,38 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 
-def write_outputs(result: dict[str, Any], file_path: Path, out_dir: Path) -> dict[str, Path]:
+def atomic_write(path: Path, payload: bytes) -> None:
+    """Publish a whole artifact or nothing; a job manifest is the final commit point."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_outputs(
+    result: dict[str, Any], file_path: Path, out_dir: Path
+) -> dict[str, Path]:
     """把单个文件的结果写成 .txt / .md / .json 三份，返回各路径。"""
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_output_stem(file_path)
     txt_path = out_dir / f"{stem}.txt"
     md_path = out_dir / f"{stem}.md"
     json_path = out_dir / f"{stem}.json"
-    txt_path.write_text(_to_txt(result, file_path), encoding="utf-8")
-    md_path.write_text(_to_md(result, file_path), encoding="utf-8")
-    json_path.write_text(_to_json(result, file_path), encoding="utf-8")
+    atomic_write(txt_path, _to_txt(result, file_path).encode("utf-8"))
+    atomic_write(md_path, _to_md(result, file_path).encode("utf-8"))
+    atomic_write(json_path, _to_json(result, file_path).encode("utf-8"))
     return {"txt": txt_path, "md": md_path, "json": json_path}
 
 
@@ -41,14 +59,15 @@ def write_isolated_projections(
         "canonical_md": out_dir / f"{stem}.{suffix}.md",
         "canonical_json": out_dir / f"{stem}.{suffix}.json",
     }
-    paths["canonical_txt"].write_text(_to_txt(result, file_path), encoding="utf-8")
-    paths["canonical_md"].write_text(_to_md(result, file_path), encoding="utf-8")
-    paths["canonical_json"].write_text(_to_json(result, file_path), encoding="utf-8")
+    atomic_write(paths["canonical_txt"], _to_txt(result, file_path).encode("utf-8"))
+    atomic_write(paths["canonical_md"], _to_md(result, file_path).encode("utf-8"))
+    atomic_write(paths["canonical_json"], _to_json(result, file_path).encode("utf-8"))
     return paths
 
 
 def safe_output_stem(path: Path) -> str:
     import re
+
     return re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", path.stem)[:120]
 
 
@@ -63,8 +82,13 @@ def _blocks_text(pages: list[dict]) -> list[str]:
 
 
 def _to_txt(result: dict, file_path: Path) -> str:
-    parts = [f"文件: {file_path.name}", f"引擎: {result.get('engine')}",
-             f"模型: {result.get('model')}", f"设备: {result.get('device')}", ""]
+    parts = [
+        f"文件: {file_path.name}",
+        f"引擎: {result.get('engine')}",
+        f"模型: {result.get('model')}",
+        f"设备: {result.get('device')}",
+        "",
+    ]
     for page in result.get("pages", []):
         idx = page.get("page_index", 0)
         parts.append(f"----- 第 {idx + 1} 页 -----")

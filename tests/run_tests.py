@@ -2,9 +2,7 @@
 """对 4 份合成样本各跑一次识别，采集模型/GPU/显存/速度/输出片段，写 TEST_REPORT.md（需求 11）。"""
 from __future__ import annotations
 
-import json
 import argparse
-import atexit
 import os
 import subprocess
 import sys
@@ -50,25 +48,13 @@ def main(argv=None):
     os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "modelscope")
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-    # Acquire the shared GPU lease before importing Paddle or any model runtime.
-    from localocr.gpu_broker import GpuBrokerLease
-
-    lease = GpuBrokerLease("localocr")
-    lease.__enter__()
-    atexit.register(lease.__exit__, None, None, None)
-
-    from localocr.gpu_probe import probe_gpu, format_probe
-    from localocr.engines import get_engine
-    from localocr.outputs import write_outputs
-    from localocr.cli import _ocr_pdf_with_ocr_engine, _ocr_pdf_with_vl
+    from localocr.service import OCRService
 
     OUT.mkdir(parents=True, exist_ok=True)
     TMP.mkdir(parents=True, exist_ok=True)
     report = ["# LocalOCR 测试报告\n", f"日期：{time.strftime('%Y-%m-%d %H:%M')}\n"]
-    info = probe_gpu()
-    report.append(f"\n## GPU 环境\n\n- {format_probe(info)}\n- 推理前显存：{gpu_mem()}\n")
-
-    cache = {}
+    report.append(f"\n## GPU 环境\n\n- 推理前显存：{gpu_mem()}\n")
+    service = OCRService(tmp_dir=TMP)
     results = []
     for title, fname, expect in CASES:
         p = SAMPLES / fname
@@ -80,18 +66,13 @@ def main(argv=None):
         mem0 = gpu_mem()
         t0 = time.time()
         try:
-            if p.suffix.lower() == ".pdf":
-                engine = get_engine(eng_key, device="gpu:0")
-                if eng_key == "vl":
-                    res = _ocr_pdf_with_vl(p, engine, TMP)
-                else:
-                    res = _ocr_pdf_with_ocr_engine(p, engine, TMP)
-            else:
-                engine = get_engine(eng_key, device="gpu:0")
-                res = engine.predict_image(str(p))
+            response = service.process_inputs([p], engine_choice=eng_key, out_dir=OUT / eng_key)
+            if not response["ok"]:
+                raise RuntimeError(response.get("status"))
+            res = response["results"][0]
             dt = time.time() - t0
             mem1 = gpu_mem()
-            paths = write_outputs(res, p, OUT)
+            paths = {key: Path(value) for key, value in res["output_files"].items()}
             pages = res.get("pages", [])
             nblocks = sum(len(pg.get("blocks", [])) for pg in pages)
             sample_texts = []
@@ -109,14 +90,15 @@ def main(argv=None):
             report.append(f"- 页数：{len(pages)}，块数：{nblocks}\n")
             report.append(f"- 输出：`{paths['md'].name}` / `{paths['json'].name}`\n")
             report.append(f"- 方向角度：{res.get('page_angle')}\n")
-            report.append(f"\n### 识别文本片段\n\n```\n" + "\n".join(sample_texts[:10]) + "\n```\n")
+            report.append("\n### 识别文本片段\n\n```\n" + "\n".join(sample_texts[:10]) + "\n```\n")
             results.append((title, True, dt))
         except Exception as e:
             dt = time.time() - t0
             report.append(f"\n## {title}\n\n[失败] {type(e).__name__}: {e} ({dt:.2f}s)\n")
             results.append((title, False, dt))
 
-    report.append(f"\n## 汇总\n\n| 样本 | 结果 | 耗时 |\n|---|---|---|\n")
+    service.close()
+    report.append("\n## 汇总\n\n| 样本 | 结果 | 耗时 |\n|---|---|---|\n")
     for title, ok, dt in results:
         report.append(f"| {title} | {'✓' if ok else '✗'} | {dt:.1f}s |\n")
     report.append(f"\n推理后显存：{gpu_mem()}\n")

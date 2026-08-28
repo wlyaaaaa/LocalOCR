@@ -14,7 +14,6 @@ from localocr.engines.ppocrv6 import PPOCRv6Engine
 from localocr.engines.structure import StructureV3Engine
 from localocr.engines.vl import VLEngine
 from localocr.pdf_utils import rendered_pdf_page_metadata, read_png_dimensions
-from localocr.service import OCRService
 
 
 class FakePredictor:
@@ -26,6 +25,10 @@ class FakePredictor:
 
 
 class StructureAdapterTest(unittest.TestCase):
+    def test_plain_ocr_does_not_deform_flat_images_but_keeps_explicit_unwarping(self):
+        self.assertFalse(PPOCRv6Engine(device="cpu").options["use_doc_unwarping"])
+        self.assertTrue(PPOCRv6Engine(device="cpu", options={"use_doc_unwarping": True}).options["use_doc_unwarping"])
+
     def test_structure_retains_details_lines_and_excluded_regions(self) -> None:
         data = {
             "width": 1000,
@@ -161,9 +164,20 @@ class PdfCoordinateContractTest(unittest.TestCase):
             self.assertEqual(metadata["rendered_height"], 480)
 
     def test_service_adds_pdf_metadata_without_model_inference(self) -> None:
-        result = {"pages": [{"page_index": 0, "width": 640, "height": 480}]}
-        OCRService._annotate_pdf_pages(result, [])
-        page = result["pages"][0]
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        from localocr.runtime import _predict
+
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "page.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + struct.pack(">II", 640, 480))
+            engine = SimpleNamespace(engine_name="Fake", model_name="Fake",
+                                     predict_image=lambda _path: {"pages": [{"page_index": 0, "blocks": []}]})
+            with patch("localocr.model_registry.get_engine", return_value=engine), patch(
+                "localocr.pdf_utils.render_pdf_to_files", return_value=[image]
+            ):
+                result = _predict({"device": "cpu", "profile_id": "ppocrv6-medium", "path": "sample.pdf", "tmp_dir": tmp}, {}, lambda _event: None)
+            page = result["pages"][0]
         self.assertTrue(page["rendered_pdf_pixels"])
         self.assertEqual(page["render_scale"], 2.0)
         self.assertEqual(page["rendered_width"], 640)
