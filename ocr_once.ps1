@@ -249,13 +249,32 @@ function Invoke-LocalOcrJsonRequest {
     }
 }
 
-function Test-LocalOcrApi {
+function Get-LocalOcrHealth {
     try {
-        $h = Invoke-RestMethod -Uri "$base/health" -Method Get -TimeoutSec 3
-        return [bool]($h.ok -eq $true)
+        return Invoke-RestMethod -Uri "$base/health" -Method Get -TimeoutSec 3
     } catch {
-        return $false
+        return $null
     }
+}
+
+function Assert-LocalOcrHealthIdentity {
+    param([Parameter(Mandatory = $true)]$Health)
+
+    $names = @($Health.PSObject.Properties.Name)
+    if ($names -contains "service") {
+        if ([string]$Health.service -ne "localocr") {
+            throw "Port $Port responded as service '$($Health.service)', not LocalOCR; refusing OCR request."
+        }
+        if ($Health.ok -ne $true) {
+            throw "Port $Port is LocalOCR but is not healthy; refusing OCR request."
+        }
+        return "ready"
+    }
+    if ($Health.ok -eq $true -and $names -contains "gpu" -and
+        $names -contains "loaded_engines" -and $names -contains "loaded_models") {
+        return "legacy_unknown"
+    }
+    throw "Port $Port is a non-LocalOCR service; refusing OCR request."
 }
 
 $exitCode = 0
@@ -263,13 +282,22 @@ $result = $null
 $startupOutput = ""
 
 try {
-    if (-not (Test-LocalOcrApi)) {
+    $health = Get-LocalOcrHealth
+    if ($null -eq $health) {
         try {
             $startupLines = @(& (Join-Path $ScriptDir "start_server.ps1") -Port $Port -HostAddress $HostAddress -StartupTimeoutSec $StartupTimeoutSec 2>&1)
             $startupOutput = ($startupLines | ForEach-Object { [string]$_ }) -join "`n"
         } catch {
             throw "LocalOCR API startup failed: $($_.Exception.Message)"
         }
+        $health = Get-LocalOcrHealth
+        if ($null -eq $health) {
+            throw "LocalOCR API health remained unavailable after startup."
+        }
+    }
+    $healthKind = Assert-LocalOcrHealthIdentity -Health $health
+    if ($healthKind -eq "legacy_unknown") {
+        throw "LocalOCR API readiness_unknown: legacy health lacks a stable service identity; update it before OCR."
     }
 
     $body = [ordered]@{

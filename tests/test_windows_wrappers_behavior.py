@@ -265,6 +265,35 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         self.assertEqual(fake.post_count, 1)
         self.assertEqual(fake.post_bodies[0]["timeout_sec"], 17)
 
+    def test_ocr_once_refuses_foreign_service_before_post(self) -> None:
+        fake = FakeLocalOcr(
+            health={
+                "ok": True,
+                "service": "foreign-service",
+                "active_jobs_count": 0,
+                "active_jobs": [],
+            },
+            response_payload={"ok": True, "count": 1, "results": []},
+        )
+        with fake:
+            completed = self._run_wrapper(
+                "ocr_once.ps1",
+                r"C:\synthetic\sample.png",
+                "-Port",
+                str(fake.port),
+                "-TimeoutSec",
+                "5",
+            )
+
+        payload = self._payload(completed)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error_code"], "runtime")
+        self.assertIn("foreign-service", payload["detail"])
+        self.assertIn("not LocalOCR", payload["detail"])
+        self.assertEqual(fake.post_count, 0)
+
     def test_ocr_once_distinguishes_http_transport_timeout(self) -> None:
         fake = FakeLocalOcr(
             response_payload={"ok": True, "count": 1, "results": []},
