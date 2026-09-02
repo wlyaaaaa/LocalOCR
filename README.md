@@ -8,12 +8,13 @@
 - **中文优先**：默认 PP-OCRv6_medium 检测+识别，保留方向检测和文本行旋转纠正；普通截图/平面扫描默认不做 UVDoc 形变矫正，避免把原本清晰的文字和坐标拉坏。
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
-- **Smart Router v3 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
+- **Smart Router v4 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
 - **客观结果与空文本语义**：每个完成结果增加 `objective_outcome=text_detected|no_text_detected|indeterminate`、`execution_status`、`coverage`、`quality` 和 `failure`。模型返回空 block/空文本不会被当成“确实无文字”；只有完整覆盖、无排除范围且独立像素检测或 adapter telemetry 生成的规范负向证据才会是 `no_text_detected`。内存结果的 `evidence.verification_status` 保持 `not_persisted`，写入 sidecar 后才为 `verified`。规范 `media.objective-result.v1` sidecar 按请求 hash 隔离并在 cache hit 时校验 schema、尺寸、哈希和输入/模型身份。
+- **人话状态摘要**：API、TXT、Markdown 和 JSON 同时返回确定性的 `display_summary`，说明文字块数量、覆盖、质量、平均置信度、自动升级和警告；它只投影现有客观字段，不从空文本推断“无文字”，也不替代原始 OCR 或 objective sidecar。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
 - **离线运行**：所有模型预下载到本地，断网可用。
 - **模型 profile 解耦**：`localocr/model_profiles.json` 声明默认模型、能力标签和 adapter；`--model` / `-Model` 可指定具体 profile。
-- **多格式输出**：TXT / Markdown / JSON，保留文字坐标、置信度、表格、阅读顺序。
+- **多格式输出**：TXT / Markdown / JSON，保留人话状态摘要、文字坐标、置信度、表格、阅读顺序。
   JSON 在保留旧 `bbox` 的同时增加 `rect` / `polygon` / `coordinate_space=image_pixels`；Structure 结果另保留
   JSON-native `structure_details`、独立 `text_lines` 和非文字区域 `excluded_regions`。
 - **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。

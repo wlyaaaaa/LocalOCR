@@ -25,7 +25,7 @@ from .objective_result import (
     file_sha256,
     write_objective_sidecar,
 )
-from .outputs import write_isolated_projections, write_outputs
+from .outputs import build_display_summary, write_isolated_projections, write_outputs
 from .router import collect_files
 from .runtime import (
     DEFAULT_TIMEOUT_SEC,
@@ -36,6 +36,7 @@ from .runtime import (
 
 
 AUTO_ROUTING_POLICY_VERSION = f"smart-router-v4:supervised:{DIFFICULTY_POLICY_VERSION}"
+OUTPUT_PROJECTION_VERSION = "display-summary-v1"
 
 
 class OCRService:
@@ -237,7 +238,7 @@ class OCRService:
         *,
         persisted: bool,
     ) -> dict:
-        return annotate_result(
+        annotated = annotate_result(
             result,
             source,
             processor=getattr(profile, "adapter", f"localocr.engine:{profile.engine}"),
@@ -248,6 +249,8 @@ class OCRService:
             caller_binding=caller_binding,
             evidence_persisted=persisted,
         )
+        annotated["display_summary"] = build_display_summary(annotated)
+        return annotated
 
     def _persist(
         self, result: dict, source: Path, output_dir: Path, job_key: str
@@ -581,7 +584,10 @@ def _request_variant(
     device: str = "gpu:0",
 ) -> str:
     model = model_choice or "<default>"
-    variant = f"engine={engine_choice};model={model};device={_normalized_device(device)}"
+    variant = (
+        f"engine={engine_choice};model={model};device={_normalized_device(device)}"
+        f";output={OUTPUT_PROJECTION_VERSION}"
+    )
     if engine_choice == "auto" and model_choice is None:
         variant += f";policy={AUTO_ROUTING_POLICY_VERSION}"
     binding_hash = caller_binding_sha256(caller_binding)

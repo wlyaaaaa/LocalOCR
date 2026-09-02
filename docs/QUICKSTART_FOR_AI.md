@@ -136,7 +136,8 @@ API 请求体：
 API 写盘任务会按源文件路径、文件内容、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`。首次完成时结果里会出现
 `cache_status=stored`；同一任务再次提交且输出文件仍在时返回 `cache_status=cache_hit`，不会重新加载模型或重复 OCR。
 新结果同时带有 `objective_outcome`、`execution_status`、`coverage`、`quality` 和 `failure`；空文本返回
-`objective_outcome=indeterminate`，不能当作 `no_text_detected`。写盘时会生成按 `job_key` 隔离的
+`objective_outcome=indeterminate`，不能当作 `no_text_detected`。`display_summary` 把这些客观字段、文字块数量、
+平均置信度和自动升级状态投影成一条人话说明；它不改变 objective 结论，也不替代原始文字与坐标。写盘时会生成按 `job_key` 隔离的
 `*.objective.json` sidecar，只有 sidecar 的 schema、`size_bytes`、hash、raw/request/model/config 身份及全部输出的
 非空 `size_bytes`/`sha256` 均通过复验才可报告 cache hit；内存结果的负向证据仍是 `not_persisted`。
 如果同一任务正在运行，API 会返回 `status=active_localocr_task`、`job_key` 和

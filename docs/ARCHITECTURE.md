@@ -45,7 +45,7 @@ PID 和进程启动时间；启动时可以立即恢复已死亡/被复用 PID �
 Windows 不会在锁住数据文件时重开/删除它。终态落盘失败保留可恢复锁，协调者明确 not-ready。
 `write_files=False` 不落任务或输出文件。
 
-`job_key` 绑定源路径/hash/大小、请求语义、规范化设备、路由策略、模型 profile、配置和输出目录。
+`job_key` 绑定源路径/hash/大小、请求语义、规范化设备、路由策略、输出投影版本、模型 profile、配置和输出目录。
 所有输出采用临时文件加原子替换，completed manifest 是最终提交点。缓存只依赖
 请求 hash 隔离的 canonical 投影和 objective sidecar；同名 stem 的兼容展示文件被覆盖
 不会使其它请求失去有效缓存。
@@ -68,6 +68,8 @@ PDF 坐标明确是渲染像素，并记录 `render_scale` 与尺寸，不伪装
 `media.objective-result.v1` 继续区分 `text_detected`、`no_text_detected`、`indeterminate`。
 空文本不能证明没有文字；负向结论必须有完整覆盖、质量与独立证据，且 source/request/model/config
 以及所有输出 size/hash 绑定有效。失败、低置信度与部分覆盖不被改写成成功。
+`display_summary` 只把 objective、覆盖、质量、文字块、置信度和路由状态确定性地投影成人话；
+它不进入 objective sidecar，不产生新的媒体结论，也不承担场景描述。
 
 ## 入口与模块
 

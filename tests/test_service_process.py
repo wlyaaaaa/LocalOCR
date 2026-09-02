@@ -84,9 +84,20 @@ class ServiceProcessTests(unittest.TestCase):
             )
             self.assertEqual(first["results"][0]["cache_status"], "stored")
             self.assertEqual(second["results"][0]["cache_status"], "cache_hit")
+            self.assertEqual(
+                first["results"][0]["display_summary"]["status"], "text_detected"
+            )
+            self.assertEqual(
+                second["results"][0]["display_summary"],
+                first["results"][0]["display_summary"],
+            )
             self.assertEqual(len(service.calls), 1)
             self.assertEqual(service.calls[0][1].name, source.name)
             self.assertNotEqual(service.calls[0][1], source)
+
+    def test_request_variant_versions_display_projection(self):
+        variant = _request_variant("ocr", None, device="gpu:0")
+        self.assertIn("output=display-summary-v1", variant)
 
     def test_auto_routes_and_escalates_low_confidence(self):
         with tempfile.TemporaryDirectory() as tmp:
