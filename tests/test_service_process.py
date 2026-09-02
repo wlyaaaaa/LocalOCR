@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from localocr.model_registry import select_model_profile
 from localocr.runtime import ExecutionError
-from localocr.service import OCRService, _request_variant
+from localocr.service import AUTO_ROUTING_POLICY_VERSION, OCRService, _request_variant
 
 
 class FakeService(OCRService):
@@ -98,6 +98,20 @@ class ServiceProcessTests(unittest.TestCase):
     def test_request_variant_versions_display_projection(self):
         variant = _request_variant("ocr", None, device="gpu:0")
         self.assertIn("output=display-summary-v1", variant)
+
+    def test_readme_default_decision_uses_current_router_generation(self):
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        default_entry = readme.split("## AI / Codex 默认入口", 1)[1].split(
+            "## 最小验收", 1
+        )[0]
+        generation = AUTO_ROUTING_POLICY_VERSION.split(":", 1)[0].removeprefix(
+            "smart-router-"
+        )
+
+        self.assertIn(f"Smart Router {generation}", default_entry)
+        self.assertNotIn("Smart Router v3", default_entry)
 
     def test_auto_routes_and_escalates_low_confidence(self):
         with tempfile.TemporaryDirectory() as tmp:

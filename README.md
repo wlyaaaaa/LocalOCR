@@ -45,7 +45,7 @@
 
 默认决策：
 
-- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v3 先走 OCR；空文本或明显低置信时自动在同一任务内升级到本地 VL。
+- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v4 先走 OCR；空文本或明显低置信时自动在同一任务内升级到本地 VL。
 - 复杂表格、公式、多栏、论文、课件、整页复杂版面：显式 `-Engine vl`，或让带复杂文件名信号的 PDF 由 `auto` 路由到 VL。
 - 需要表格 HTML、版面块、公式、印章、区域检测、坐标：显式 `-Engine structure`。
 - 需要指定或替换具体模型：用 `-Model <profile-id>` / `--model <profile-id>`，并先改 `localocr/model_profiles.json`，不要把模型名硬编码进 wrapper 或服务层。
