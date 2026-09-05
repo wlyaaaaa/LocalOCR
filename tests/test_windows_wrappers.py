@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,50 @@ class WindowsWrapperTest(unittest.TestCase):
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    def test_start_converts_chinese_windows_path_before_cli(self) -> None:
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        script_path = self._windows_script_path(ROOT / "start.ps1")
+
+        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as temp_dir:
+            input_path = Path(temp_dir) / "中文目录" / "示例 图片.png"
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+            capture_path = Path(temp_dir) / "wsl-arguments.json"
+            input_windows = self._windows_script_path(input_path)
+            capture_windows = self._windows_script_path(capture_path)
+            normalized_input = input_windows.replace("\\", "/")
+            self.assertRegex(normalized_input, r"^[A-Za-z]:/")
+            expected_wsl_path = f"/mnt/{normalized_input[0].lower()}{normalized_input[2:]}"
+
+            quoted_script = script_path.replace("'", "''")
+            quoted_input = input_windows.replace("'", "''")
+            quoted_capture = capture_windows.replace("'", "''")
+            command = f"""
+function wsl {{
+    param([string]$d, [string]$e, [string]$c)
+    [IO.File]::WriteAllText(
+        '{quoted_capture}',
+        (@('-d', $d, '-e', $e, '-c', $c) | ConvertTo-Json -Compress),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $global:LASTEXITCODE = 0
+}}
+& '{quoted_script}' '{quoted_input}'
+"""
+            completed = subprocess.run(
+                [executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                check=False,
+                capture_output=True,
+                text=False,
+                timeout=20,
+            )
+
+            stderr = _decode_process_output(completed.stderr)
+            self.assertEqual(completed.returncode, 0, stderr)
+            self.assertTrue(capture_path.is_file(), _decode_process_output(completed.stdout))
+            wsl_arguments = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertIn(expected_wsl_path, wsl_arguments[-1])
 
     def test_start_server_uses_named_mutex(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")

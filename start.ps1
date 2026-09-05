@@ -20,7 +20,7 @@ foreach ($a in $Args) {
         $wslArgs += $a
     } elseif (Test-Path -LiteralPath $a) {
         $full = (Resolve-Path -LiteralPath $a).Path
-        $wslArgs += ($full -replace '^([A-Za-z]):', { '/mnt/' + $args[0].Groups[1].Value.ToLower() } -replace '\\', '/')
+        $wslArgs += ($full -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() } -replace '\\', '/')
     } else {
         $wslArgs += $a
     }
