@@ -17,7 +17,7 @@
 - **多格式输出**：TXT / Markdown / JSON，保留人话状态摘要、文字坐标、置信度、表格、阅读顺序。
   JSON 在保留旧 `bbox` 的同时增加 `rect` / `polygon` / `coordinate_space=image_pixels`；Structure 结果另保留
   JSON-native `structure_details`、独立 `text_lines` 和非文字区域 `excluded_regions`。
-- **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可自动识别。
+- **拖拽即用**：把图片、文件夹或 PDF 拖到 `start.bat` 上即可识别；Windows 入口使用 PowerShell 7.3+（`pwsh`），保留中文和空格路径，旧 Windows PowerShell 5.1 不支持。
 - **可恢复的本地 API**：API 不加载 Paddle；所有模型由一个受监督的工作进程运行。同模型热复用，换模型重建；执行期限、取消、租约丢失和服务退出都会结束工作进程树。
 - **任务级缓存/去重**：API 会按源文件、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
 - **Codex 防卡入口**：`ocr_smart.ps1` 以 `/health.active_jobs` 判断忙碌，保留 HTTP 错误正文与任务定位；不再以进程名探测代替任务状态。默认整个请求执行期限 300 秒，默认调用端等待 330 秒。
@@ -84,7 +84,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 
 ### 1. 安装（一次性）
 
-在 **Windows PowerShell** 里：
+在 Windows 的 **PowerShell 7.3+（`pwsh`）** 里：
 
 ```powershell
 wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh

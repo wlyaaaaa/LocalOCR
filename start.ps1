@@ -1,3 +1,4 @@
+﻿#requires -Version 7.3
 # LocalOCR Windows 启动入口（PowerShell）
 # 拖入文件/文件夹/PDF，或：.\start.ps1 "C:\路径\文件或文件夹" [--engine auto|ocr|vl|structure] [--model profile-id]
 param(

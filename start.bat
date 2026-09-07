@@ -8,5 +8,5 @@ if "%~1"=="" (
     pause
     exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%start.ps1" %*
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%start.ps1" %*
 endlocal

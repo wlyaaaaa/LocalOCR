@@ -42,6 +42,52 @@ class WindowsWrapperTest(unittest.TestCase):
 
     def test_start_converts_chinese_windows_path_before_cli(self) -> None:
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        self._assert_start_converts_chinese_windows_path_before_cli(executable)
+
+    def test_drag_drop_host_converts_chinese_windows_path_before_cli(self) -> None:
+        batch = (ROOT / "start.bat").read_text(encoding="utf-8")
+        launch = next(
+            line for line in batch.splitlines()
+            if "-File" in line and "start.ps1" in line
+        )
+        executable = launch.split()[0].strip('"')
+        if os.name != "nt" and not executable.lower().endswith(".exe"):
+            executable += ".exe"
+        self._assert_start_converts_chinese_windows_path_before_cli(executable)
+
+    def test_drag_drop_batch_launches_selected_input(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as temp_dir:
+            folder = Path(temp_dir)
+            batch = folder / "start.bat"
+            batch.write_bytes((ROOT / "start.bat").read_bytes())
+            input_path = folder / "中文目录" / "示例 图片.png"
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+            capture = folder / "selected-input.json"
+            input_windows = self._windows_script_path(input_path)
+            capture_windows = self._windows_script_path(capture).replace("'", "''")
+            # The real batch must select its adjacent script and preserve the input.
+            # This harmless script stops the chain before WSL or model execution.
+            (folder / "start.ps1").write_text(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Inputs)\n"
+                f"[IO.File]::WriteAllText('{capture_windows}', "
+                "(ConvertTo-Json -InputObject @($Inputs) -Compress), "
+                "[Text.UTF8Encoding]::new($false))\n",
+                encoding="utf-8-sig",
+            )
+            completed = subprocess.run(
+                ["cmd.exe", "/d", "/c", self._windows_script_path(batch), input_windows],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=False,
+                timeout=10,
+            )
+            self.assertEqual(completed.returncode, 0, _decode_process_output(completed.stderr))
+            self.assertTrue(capture.is_file(), _decode_process_output(completed.stdout))
+            self.assertEqual(json.loads(capture.read_text(encoding="utf-8")), [input_windows])
+
+    def _assert_start_converts_chinese_windows_path_before_cli(self, executable: str) -> None:
         script_path = self._windows_script_path(ROOT / "start.ps1")
 
         with tempfile.TemporaryDirectory(dir=ROOT / "tests") as temp_dir:
