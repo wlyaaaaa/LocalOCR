@@ -1,4 +1,4 @@
-# Smart LocalOCR wrapper for Codex. It never waits forever on an OCR client call.
+﻿# Smart LocalOCR wrapper for Codex. It never waits forever on an OCR client call.
 param(
     [Parameter(Position = 0)]
     [string]$Path,
@@ -77,43 +77,28 @@ function Resolve-SmartRoutePreview {
     }
 
     $extension = [System.IO.Path]::GetExtension($InputPath).ToLowerInvariant()
-    $fileName = [System.IO.Path]::GetFileName($InputPath).ToLowerInvariant()
-    $complexKeywords = @("table", "formula", "layout", "multi", "column", "lecture", "paper", "论文", "公式", "表格", "多栏", "课件")
     if ($extension -in @(".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff")) {
         return [pscustomobject]@{
             effective_engine = "ocr"
             reason = "image_prefers_ocr"
-            confidence = 0.9
+            confidence = $null
             signals = @("image", "ext:$extension")
         }
     }
     if ($extension -eq ".pdf") {
         $signals = @("pdf", "ext:.pdf")
-        foreach ($keyword in $complexKeywords) {
-            if ($fileName.Contains($keyword)) {
-                $signals += "complex_keyword:$keyword"
-            }
-        }
-        if ($signals.Count -gt 2) {
-            return [pscustomobject]@{
-                effective_engine = "vl"
-                reason = "pdf_complex_layout_prefers_vl"
-                confidence = 0.82
-                signals = $signals
-            }
-        }
         $signals += "plain_pdf_default"
         return [pscustomobject]@{
             effective_engine = "ocr"
             reason = "pdf_plain_text_prefers_ocr"
-            confidence = 0.72
+            confidence = $null
             signals = $signals
         }
     }
     return [pscustomobject]@{
         effective_engine = "ocr"
         reason = "unknown_type_prefers_ocr"
-        confidence = 0.5
+        confidence = $null
         signals = @("unknown_type", "ext:$extension")
     }
 }

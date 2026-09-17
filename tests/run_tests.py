@@ -1,113 +1,122 @@
 #!/usr/bin/env python3
-"""对 4 份合成样本各跑一次识别，采集模型/GPU/显存/速度/输出片段，写 TEST_REPORT.md（需求 11）。"""
+"""Serial, cache-free GPU acceptance using generated non-private ground truth."""
 from __future__ import annotations
-
 import argparse
+import importlib.metadata
+import json
 import os
-import subprocess
-import sys
-import time
 from pathlib import Path
-
-SAMPLES = Path(__file__).resolve().parent / "samples"
-OUT = Path(__file__).resolve().parent / "outputs"
-TMP = Path(__file__).resolve().parent / "_pdf_pages"
-
-CASES = [
-    ("中文截图", "sample_chat_screenshot.png", "ocr"),
-    ("扫描PDF", "sample_scan.pdf", "vl"),
-    ("表格", "sample_table.png", "vl"),
-    ("结构化表格", "sample_table.png", "structure"),
-    ("公式文档", "sample_formula.png", "vl"),
-]
+import sys
+import tempfile
+import time
+import uuid
 
 
-def gpu_mem() -> str:
-    try:
-        r = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-                           capture_output=True, text=True, timeout=10)
-        return r.stdout.strip() + " MiB"
-    except Exception:
-        return "?"
+def make_cases(directory: Path):
+    from PIL import Image, ImageDraw, ImageFont
+    fonts = [Path(p) for p in ('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc')]
+    selected = next((p for p in fonts if p.is_file()), None)
+    if selected is None:
+        raise RuntimeError('A local CJK font is required; missing glyphs are not valid OCR ground truth')
+    def page(lines, size=32):
+        font = ImageFont.truetype(str(selected), size)
+        image = Image.new('RGB', (1000, max(360, 60 + len(lines) * 65)), 'white')
+        draw = ImageDraw.Draw(image)
+        for i, line in enumerate(lines):
+            box = draw.textbbox((30, 30 + i * 65), line, font=font)
+            if box[2] >= image.width - 20 or box[3] >= image.height - 20:
+                raise ValueError('Generated ground truth would be clipped')
+            draw.text((30, 30 + i * 65), line, font=font, fill='black')
+        return image
+    lines = ['本地文字识别验收', '编号 OCR-2026-0917', '数量 25 金额 1280.50', '请保留原始文字与页码']
+    other = ['第二页独立核验', '编号 CHECK-7319', '实付金额 98.76 元']
+    image, second = page(lines), page(other)
+    image.save(directory / 'plain.png')
+    rotated = image.rotate(90, expand=True); rotated.save(directory / 'rotated.png'); rotated.close()
+    small_lines = ['小字核验 QX-7319', '实付金额 98.76 元']
+    small = page(small_lines, 20); small.save(directory / 'small.png'); small.close()
+    image.save(directory / 'two.tiff', save_all=True, append_images=[second])
+    image.save(directory / 'two.pdf', save_all=True, append_images=[second], resolution=144)
+    blank = Image.new('RGB', (600, 400), 'white'); blank.save(directory / 'blank.png'); blank.close()
+    table = Image.new('RGB', (850, 400), 'white'); draw = ImageDraw.Draw(table); font = ImageFont.truetype(str(selected), 28)
+    rows = [['项目', '数量', '金额'], ['样品A', '2', '30.00'], ['样品B', '3', '45.00']]
+    for y in [50, 130, 210, 290]: draw.line((30, y, 810, y), fill='black', width=3)
+    for x in [30, 290, 550, 810]: draw.line((x, 50, x, 290), fill='black', width=3)
+    for y, row in enumerate(rows):
+        for x, value in enumerate(row): draw.text((50 + 260 * x, 75 + 80 * y), value, font=font, fill='black')
+    table.save(directory / 'table.png'); table.close()
+    image.close(); second.close()
+    return [
+        {'name': 'plain', 'file': 'plain.png', 'engine': 'ocr', 'text': '\n'.join(lines), 'critical': ['OCR-2026-0917', '1280.50'], 'pages': 1, 'cer_max': .02},
+        {'name': 'rotated', 'file': 'rotated.png', 'engine': 'ocr', 'text': '\n'.join(lines), 'critical': ['1280.50'], 'pages': 1, 'cer_max': .02},
+        {'name': 'small', 'file': 'small.png', 'engine': 'ocr', 'text': '\n'.join(small_lines), 'critical': ['QX-7319', '98.76'], 'pages': 1, 'cer_max': .04},
+        {'name': 'multiframe_tiff', 'file': 'two.tiff', 'engine': 'ocr', 'text': '\n'.join(lines + other), 'critical': ['OCR-2026-0917', 'CHECK-7319', '98.76'], 'pages': 2, 'cer_max': .02},
+        {'name': 'blank', 'file': 'blank.png', 'engine': 'ocr', 'text': '', 'critical': [], 'pages': 1, 'cer_max': 0},
+        {'name': 'vl_plain', 'file': 'plain.png', 'engine': 'vl', 'text': '\n'.join(lines), 'critical': ['OCR-2026-0917', '1280.50'], 'pages': 1, 'cer_max': .04},
+        {'name': 'vl_pdf', 'file': 'two.pdf', 'engine': 'vl', 'text': '\n'.join(lines + other), 'critical': ['CHECK-7319', '98.76'], 'pages': 2, 'cer_max': .04},
+        {'name': 'structure_table', 'file': 'table.png', 'engine': 'structure', 'critical': ['30.00', '45.00'], 'cells': [v for row in rows for v in row], 'pages': 1},
+        {'name': 'auto_table', 'file': 'table.png', 'engine': 'auto', 'critical': ['30.00', '45.00'], 'pages': 1, 'escalation_required': True},
+    ]
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run the heavy LocalOCR GPU integration suite.")
-    parser.add_argument(
-        "--allow-heavy",
-        action="store_true",
-        help="Explicitly authorize loading OCR, VL, and Structure GPU models and writing test outputs.",
-    )
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description='Run serial synthetic GPU quality and coverage acceptance.')
+    parser.add_argument('--allow-heavy', action='store_true')
+    parser.add_argument('--out-dir', type=Path)
+    parser.add_argument('--engine', choices=['ocr', 'vl', 'structure', 'auto'])
+    parser.add_argument('--timeout-sec', type=float, default=180)
     args = parser.parse_args(argv)
     if not args.allow_heavy:
-        parser.error("heavy GPU integration requires explicit --allow-heavy authorization")
-
-    os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
-    os.environ.setdefault("PADDLE_PDX_DISABLE_DEV_MODEL_WL", "true")
-    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "true")
-    os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "modelscope")
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
+        parser.error('Heavy integration requires explicit --allow-heavy authorization')
+    if not 0 < args.timeout_sec <= 7200: parser.error('Invalid execution timeout')
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root)); sys.path.insert(0, str(root / 'tests'))
+    from quality_metrics import character_error_rate, normalize, result_text, table_cells
     from localocr.service import OCRService
-
-    OUT.mkdir(parents=True, exist_ok=True)
-    TMP.mkdir(parents=True, exist_ok=True)
-    report = ["# LocalOCR 测试报告\n", f"日期：{time.strftime('%Y-%m-%d %H:%M')}\n"]
-    report.append(f"\n## GPU 环境\n\n- 推理前显存：{gpu_mem()}\n")
-    service = OCRService(tmp_dir=TMP)
-    results = []
-    for title, fname, expect in CASES:
-        p = SAMPLES / fname
-        if not p.exists():
-            report.append(f"\n## {title}\n\n[样本缺失] {p}\n")
-            continue
-        # 测试时强制走期望引擎，以验证两个引擎都能处理对应类型
-        eng_key = expect
-        mem0 = gpu_mem()
-        t0 = time.time()
+    from localocr.release_identity import execution_sha256
+    from localocr.model_registry import load_model_profiles
+    for key, value in {'PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT': '0', 'PADDLE_PDX_DISABLE_DEV_MODEL_WL': 'true', 'PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK': 'true', 'PADDLE_PDX_MODEL_SOURCE': 'modelscope'}.items():
+        os.environ.setdefault(key, value)
+    output = args.out_dir or root / 'tests/outputs' / ('quality-' + uuid.uuid4().hex)
+    output.mkdir(parents=True, exist_ok=True)
+    report = {'schema': 'localocr.quality-acceptance.v1', 'python_prefix': sys.prefix, 'cache_mode': 'disabled', 'scope': 'synthetic regression, not a real-world accuracy ranking', 'cases': [], 'packages': {n: importlib.metadata.version(n) for n in ['paddlepaddle-gpu', 'paddleocr', 'paddlex']}}
+    with tempfile.TemporaryDirectory(prefix='localocr-quality-') as temporary:
+        work = Path(temporary); cases = make_cases(work)
+        if args.engine: cases = [case for case in cases if case['engine'] == args.engine]
+        service = OCRService(tmp_dir=work / 'scratch', job_dir=work / 'jobs')
         try:
-            response = service.process_inputs([p], engine_choice=eng_key, out_dir=OUT / eng_key)
-            if not response["ok"]:
-                raise RuntimeError(response.get("status"))
-            res = response["results"][0]
-            dt = time.time() - t0
-            mem1 = gpu_mem()
-            paths = {key: Path(value) for key, value in res["output_files"].items()}
-            pages = res.get("pages", [])
-            nblocks = sum(len(pg.get("blocks", [])) for pg in pages)
-            sample_texts = []
-            for pg in pages[:2]:
-                for b in pg.get("blocks", [])[:8]:
-                    t = (b.get("text") or "").strip()
-                    if t:
-                        sample_texts.append(t)
-            report.append(f"\n## {title}\n")
-            report.append(f"- 文件：`{fname}`\n")
-            report.append(f"- 引擎：`{eng_key}`\n")
-            report.append(f"- 模型：`{res.get('model')}`\n")
-            report.append(f"- 耗时：{dt:.2f}s\n")
-            report.append(f"- 显存：{mem0} → {mem1}\n")
-            report.append(f"- 页数：{len(pages)}，块数：{nblocks}\n")
-            report.append(f"- 输出：`{paths['md'].name}` / `{paths['json'].name}`\n")
-            report.append(f"- 方向角度：{res.get('page_angle')}\n")
-            report.append("\n### 识别文本片段\n\n```\n" + "\n".join(sample_texts[:10]) + "\n```\n")
-            results.append((title, True, dt))
-        except Exception as e:
-            dt = time.time() - t0
-            report.append(f"\n## {title}\n\n[失败] {type(e).__name__}: {e} ({dt:.2f}s)\n")
-            results.append((title, False, dt))
+            for case in cases:
+                start = time.monotonic(); before = list(service.loaded_models)
+                item = {'name': case['name'], 'engine': case['engine'], 'expected_pages': case['pages'], 'loaded_before': before, 'ok': False}
+                try:
+                    response = service.process_inputs([work / case['file']], engine_choice=case['engine'], write_files=False, timeout_sec=args.timeout_sec)
+                    if not response['ok']: raise RuntimeError(response.get('error_code') or response.get('status'))
+                    result = response['results'][0]; text = result_text(result)
+                    cer = character_error_rate(case['text'], text) if 'text' in case else None
+                    missing = [v for v in case['critical'] if normalize(v) not in normalize(text)]
+                    cells = table_cells(result)
+                    cells_ok = 'cells' not in case or cells == [normalize(v) for v in case['cells']]
+                    coverage = result['objective_result']['coverage']
+                    page_ok = coverage['status'] == 'complete' and coverage['pages_expected'] == case['pages'] and len(result['pages']) == case['pages']
+                    route_ok = not case.get('escalation_required') or result.get('route', {}).get('escalated') is True
+                    item.update(ok=page_ok and not missing and cells_ok and route_ok and (cer is None or cer <= case['cer_max']), cer=cer, cer_max=case.get('cer_max'), missing_critical=missing, table_cells=cells if 'cells' in case else None, table_cells_ok=cells_ok, coverage=coverage, route=result.get('route'), text=text, model_ids=result.get('models_used') or [result['model_id']], cache_status=result['cache_status'])
+                    if result['cache_status'] != 'not_written': raise AssertionError('Benchmark unexpectedly used a result cache')
+                except Exception as exc:
+                    item.update(error=f'{type(exc).__name__}: {exc}', error_code=getattr(exc, 'code', None))
+                item['elapsed_sec'] = round(time.monotonic() - start, 3)
+                item['process_peak_rss_bytes'] = service._runtime.peak_memory_bytes
+                report['cases'].append(item)
+                print(json.dumps({key: item.get(key) for key in ['name', 'ok', 'cer', 'elapsed_sec', 'error']}, ensure_ascii=False), flush=True)
+                (output / 'quality.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+                if item.get('error_code') in {'execution_cancelled', 'gpu_lease_lost', 'broker_unavailable'}:
+                    report['stopped_reason'] = item['error_code']
+                    break
+        finally:
+            service.close()
+    report['ok'] = bool(report['cases']) and all(case['ok'] for case in report['cases'])
+    report['model_identities'] = {p.id: execution_sha256(p) for p in load_model_profiles().profiles.values()}
+    (output / 'quality.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    return 0 if report['ok'] else 1
 
-    service.close()
-    report.append("\n## 汇总\n\n| 样本 | 结果 | 耗时 |\n|---|---|---|\n")
-    for title, ok, dt in results:
-        report.append(f"| {title} | {'✓' if ok else '✗'} | {dt:.1f}s |\n")
-    report.append(f"\n推理后显存：{gpu_mem()}\n")
-
-    rp = Path(__file__).resolve().parent / "TEST_REPORT.md"
-    rp.write_text("".join(report), encoding="utf-8")
-    print("报告已写入:", rp)
-    print("".join(report[-15:]))
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    raise SystemExit(main())

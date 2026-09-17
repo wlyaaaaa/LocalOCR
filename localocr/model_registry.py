@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,10 @@ class ModelProfile:
     pipeline_version: str
     capabilities: tuple[str, ...]
     options: dict[str, Any]
+    runtime_backend: str = "paddle"
+    revision: str = ""
+    artifact_paths: tuple[str, ...] = ()
+    preprocessing: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -32,10 +36,14 @@ class ModelRegistry:
     profiles: dict[str, ModelProfile]
 
 
-@lru_cache(maxsize=1)
 def load_model_profiles(path: str | Path | None = None) -> ModelRegistry:
     profile_path = Path(path) if path is not None else DEFAULT_PROFILE_PATH
-    raw = json.loads(profile_path.read_text(encoding="utf-8"))
+    return _parse_profiles(profile_path.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=8)
+def _parse_profiles(content: str) -> ModelRegistry:
+    raw = json.loads(content)
 
     defaults = dict(raw.get("defaults") or {})
     profiles: dict[str, ModelProfile] = {}
@@ -50,7 +58,20 @@ def load_model_profiles(path: str | Path | None = None) -> ModelRegistry:
             pipeline_version=str(item.get("pipeline_version") or ""),
             capabilities=tuple(str(v) for v in item.get("capabilities", [])),
             options=dict(item.get("options") or {}),
+            runtime_backend=str(item.get("runtime_backend", "paddle")),
+            revision=str(item.get("revision", "")),
+            artifact_paths=tuple(str(v) for v in item.get("artifact_paths", [])),
+            preprocessing=dict(item.get("preprocessing") or {}),
         )
+        if profile.runtime_backend not in {"paddle", "torch"}:
+            raise ValueError(f"Unsupported runtime_backend: {profile.runtime_backend}")
+        if profile.preprocessing:
+            dpi = profile.preprocessing.get("pdf_dpi", 216)
+            pixels = profile.preprocessing.get("max_render_pixels", 24_000_000)
+            if isinstance(dpi, bool) or not isinstance(dpi, (int, float)) or not 72 <= dpi <= 600:
+                raise ValueError("pdf_dpi must be between 72 and 600")
+            if type(pixels) is not int or not 1 <= pixels <= 100_000_000:
+                raise ValueError("max_render_pixels must be a positive bounded integer")
         if profile.engine not in VALID_ENGINE_KEYS:
             raise ValueError(f"model profile {profile.id!r} has invalid engine {profile.engine!r}")
         if profile.options.get("cuda_module_loading") not in {None, "LAZY", "EAGER"}:
@@ -78,8 +99,8 @@ def list_model_ids() -> list[str]:
     return sorted(load_model_profiles().profiles)
 
 
-def resolve_model_reference(model_ref: str) -> ModelProfile:
-    registry = load_model_profiles()
+def resolve_model_reference(model_ref: str, registry: ModelRegistry | None = None) -> ModelProfile:
+    registry = registry or load_model_profiles()
     normalized = model_ref.strip()
     profile_id = registry.defaults.get(normalized, normalized)
     try:
@@ -108,9 +129,11 @@ def select_model_profile_with_route(
     *,
     engine_choice: str = "auto",
     model_choice: str | None = None,
+    registry: ModelRegistry | None = None,
 ) -> tuple[ModelProfile, SmartRouteDecision]:
+    registry = registry or load_model_profiles()
     if model_choice:
-        profile = resolve_model_reference(model_choice)
+        profile = resolve_model_reference(model_choice, registry)
         if engine_choice != "auto" and profile.engine != engine_choice:
             raise ValueError(
                 f"model profile {profile.id!r} uses engine {profile.engine!r} "
@@ -126,12 +149,12 @@ def select_model_profile_with_route(
         return profile, route
 
     route = choose_smart_route(path, engine_choice=engine_choice, model_choice=model_choice)
-    profile = resolve_model_reference(route.effective_engine)
+    profile = resolve_model_reference(route.effective_engine, registry)
     return profile, route.with_model_id(profile.id)
 
 
-def get_engine(model_ref: str, device: str = "gpu:0"):
-    profile = resolve_model_reference(model_ref)
+def get_engine(model_ref: str | ModelProfile, device: str = "gpu:0"):
+    profile = model_ref if isinstance(model_ref, ModelProfile) else resolve_model_reference(model_ref)
     module_name, class_name = profile.adapter.split(":", 1)
     module = importlib.import_module(module_name)
     engine_cls = getattr(module, class_name)
@@ -146,3 +169,6 @@ def get_engine(model_ref: str, device: str = "gpu:0"):
         pipeline_version=profile.pipeline_version,
         options=options,
     )
+
+# Retain the explicit test/administration cache reset entrypoint.
+load_model_profiles.cache_clear = _parse_profiles.cache_clear

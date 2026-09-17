@@ -564,7 +564,14 @@ def _source_info(path: Path) -> dict[str, Any]:
     readable = True
     if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}:
         readable = _image_readable(path)
+    page_count = None
+    try:
+        from .pdf_utils import input_page_count
+        page_count = input_page_count(path)
+    except Exception:
+        pass  # Corrupt/unknown input cannot supply independent coverage.
     return {
+        "page_count": page_count,
         "available": True,
         "size": stat.st_size,
         "raw_sha256": file_sha256(path),
@@ -594,7 +601,7 @@ def _uniform_image_evidence(path: Path, source_info: Mapping[str, Any]) -> dict[
     response.  Complex or unreadable images deliberately return no evidence.
     """
 
-    if source_info.get("format") == "pdf" or not source_info.get("readable"):
+    if source_info.get("format") == "pdf" or (source_info.get("page_count") or 1) > 1 or not source_info.get("readable"):
         return None
     try:
         import cv2  # type: ignore
@@ -631,9 +638,9 @@ def _pages(result: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _coverage(result: Mapping[str, Any], pages: list[dict[str, Any]], source_info: Mapping[str, Any]) -> dict[str, Any]:
-    expected = result.get("expected_page_count")
-    if not isinstance(expected, int) or expected < 1:
-        expected = 1 if source_info.get("format") != "pdf" else None
+    expected = source_info.get("page_count") or result.get("expected_page_count")
+    if type(expected) is not int or expected < 1:
+        expected = 1 if source_info.get("format") not in {"pdf", "tif", "tiff"} else None
     indices: list[int] = []
     for index, page in enumerate(pages):
         value = page.get("page_index", index)
@@ -642,7 +649,7 @@ def _coverage(result: Mapping[str, Any], pages: list[dict[str, Any]], source_inf
     contiguous = indices == list(range(len(indices))) and bool(indices)
     if expected is not None and len(pages) != expected:
         status = "partial" if pages else "unknown"
-    elif contiguous:
+    elif contiguous and expected is not None:
         status = "complete"
     elif pages:
         status = "partial"

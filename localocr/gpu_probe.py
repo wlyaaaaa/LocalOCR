@@ -4,15 +4,17 @@ import os
 
 os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
 
-import paddle
 
 
 class GPUProbeError(RuntimeError):
     pass
 
 
-def probe_gpu(required_capability: tuple[int, int] = (12, 0)) -> dict:
+def probe_gpu(required_capability: tuple[int, int] = (12, 0), *, device: str = "gpu:0") -> dict:
     """强制 GPU 探针。任一不满足即抛 GPUProbeError，绝不静默回退 CPU（需求 12）。"""
+    import paddle
+    index = int(device.split(":")[-1]) if ":" in device else 0
+    paddle.set_device(f"gpu:{index}")
     info: dict = {}
     info["compiled_with_cuda"] = paddle.is_compiled_with_cuda()
     if not info["compiled_with_cuda"]:
@@ -24,8 +26,8 @@ def probe_gpu(required_capability: tuple[int, int] = (12, 0)) -> dict:
         raise GPUProbeError(
             "未检测到可用 CUDA 设备。请检查 WSL2 的 NVIDIA 驱动透传（/usr/lib/wsl/lib/libcuda.so.1）。"
         )
-    info["device_name"] = paddle.device.cuda.get_device_name(0)
-    cap = paddle.device.cuda.get_device_capability(0)
+    info["device_name"] = paddle.device.cuda.get_device_name(index)
+    cap = paddle.device.cuda.get_device_capability(index)
     info["capability"] = tuple(cap)
     info["capability_str"] = f"sm_{cap[0] * 10 + cap[1]}"
     if (cap[0], cap[1]) < required_capability:
@@ -36,7 +38,7 @@ def probe_gpu(required_capability: tuple[int, int] = (12, 0)) -> dict:
     # 实际算子执行验证
     try:
         x = paddle.randn([512, 512])
-        y = x.cuda()
+        y = x.cuda(index)
         z = paddle.matmul(y, y)
         paddle.device.synchronize()
         _ = float(z.sum())
@@ -55,3 +57,22 @@ def format_probe(info: dict) -> str:
         f"count={info['device_count']} | "
         f"place={info['place']} | op_ok={info['op_exec_ok']}"
     )
+
+
+def probe_torch_gpu(*, device: str = "gpu:0") -> dict:
+    """Backend-scoped probe; a non-Paddle adapter never initializes Paddle."""
+    import torch
+    index = int(device.split(":")[-1]) if ":" in device else 0
+    if not torch.cuda.is_available():
+        raise GPUProbeError("PyTorch CUDA is unavailable; no silent CPU fallback")
+    target = f"cuda:{index}"
+    cap = torch.cuda.get_device_capability(index)
+    with torch.inference_mode():
+        tensor = torch.ones((32, 32), device=target)
+        value = tensor @ tensor
+        torch.cuda.synchronize(index)
+        if not torch.isfinite(value).all().item():
+            raise GPUProbeError("PyTorch CUDA operator returned non-finite values")
+    return {"compiled_with_cuda": bool(torch.version.cuda), "device_count": torch.cuda.device_count(),
+            "device_name": torch.cuda.get_device_name(index), "capability": cap,
+            "capability_str": f"sm_{cap[0] * 10 + cap[1]}", "place": target, "op_exec_ok": True}

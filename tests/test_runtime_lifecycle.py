@@ -17,6 +17,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Any, Callable
+from unittest.mock import patch
 
 import psutil
 
@@ -25,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from localocr.runtime import ExecutionError, InferenceRuntime  # noqa: E402
+from localocr.runtime import ExecutionError, InferenceRuntime, _process_identity  # noqa: E402
 from localocr.service import OCRService  # noqa: E402
 
 
@@ -278,6 +279,41 @@ class RuntimeLifecycleTest(unittest.TestCase):
             message=f"worker tree survived: worker={worker_pid}, child={child_pid}",
         )
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux stable process identity")
+    def test_linux_process_identity_ignores_wall_clock_and_detects_pid_reuse(self) -> None:
+        before = _process_identity(os.getpid())
+        self.assertIsNotNone(before)
+        with patch("localocr.runtime.psutil.Process", side_effect=AssertionError("wall-clock API must not be used")), patch("localocr.runtime.time.time", return_value=1):
+            self.assertEqual(_process_identity(os.getpid()), before)
+        fields = ["S"] + ["0"] * 18 + ["12345"]
+        with patch("localocr.runtime.Path.read_text", return_value="777 (name ) with spaces) " + " ".join(fields)):
+            self.assertEqual(_process_identity(777), (777, 12345))
+        fields[19] = "12346"
+        with patch("localocr.runtime.Path.read_text", return_value="777 (reused) " + " ".join(fields)):
+            self.assertEqual(_process_identity(777), (777, 12346))
+        fields[0] = "Z"
+        with patch("localocr.runtime.Path.read_text", return_value="777 (zombie) " + " ".join(fields)):
+            self.assertIsNone(_process_identity(777))
+
+    def test_short_lived_calling_threads_do_not_kill_warm_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = self._runtime(); root = Path(tmp); outcomes = []
+            def call():
+                try:
+                    outcomes.append(self._predict(runtime, self._payload(root, profile_id="thread-warm")))
+                except Exception as exc:
+                    outcomes.append(exc)
+            worker = None
+            for _ in range(12):
+                thread = threading.Thread(target=call)
+                thread.start(); thread.join(8)
+                self.assertFalse(thread.is_alive())
+                self.assertIsInstance(outcomes[-1], dict)
+                worker = worker or outcomes[-1]["worker_pid"]
+                time.sleep(0.1)
+                self.assertEqual(runtime.pid, worker, "creator-thread retirement must not kill the process")
+                self.assertEqual(outcomes[-1]["worker_pid"], worker)
+
     def test_same_model_is_warm_and_switch_replaces_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -295,6 +331,15 @@ class RuntimeLifecycleTest(unittest.TestCase):
             self.assertEqual(switched["model_loads"], 1)
             self.assertEqual(runtime.profile_id, "profile-b")
             self.assertFalse(_pid_alive(first_pid), "profile switch left the old warm worker alive")
+
+    def test_same_model_revision_change_replaces_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = self._runtime()
+            first = self._predict(runtime, self._payload(root, profile_id="profile-a", profile_revision="old"))
+            second = self._predict(runtime, self._payload(root, profile_id="profile-a", profile_revision="new"))
+            self.assertNotEqual(first["worker_pid"], second["worker_pid"])
+            self.assertFalse(_pid_alive(first["worker_pid"]))
 
     def test_timeout_kills_full_worker_tree_and_next_request_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -387,6 +432,8 @@ class RuntimeLifecycleTest(unittest.TestCase):
                 )
 
             self.assertEqual(raised.exception.code, "worker_exited")
+            if "worker_exit_code" in raised.exception.context:
+                self.assertEqual(raised.exception.context["worker_exit_code"], 37)
             child_pid = _read_pid(child_path)
             self.assertIsNotNone(child_pid, "crashing fake worker did not create its ordinary child")
             self.assertIsNone(runtime.pid)

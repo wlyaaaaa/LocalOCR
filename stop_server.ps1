@@ -1,4 +1,4 @@
-# Stop exactly one LocalOCR API server and its supervised worker tree inside WSL.
+﻿# Stop exactly one LocalOCR API server and its supervised worker tree inside WSL.
 param(
     [ValidateRange(1, 65535)]
     [int]$Port = 18665,
@@ -14,7 +14,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ServerDir = Join-Path $ScriptDir "_server"
 # Legacy cleanup only; this file is never the current server identity source.
 $PidPath = Join-Path $ServerDir "wsl-server.pid"
-$PythonPath = "/root/localocr-venv/bin/python"
+$RuntimeScript = "/mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh"
 
 # This query is intentionally a fixed, one-shot psutil lookup. It does not
 # import LocalOCR/Paddle, scan by a broad process name, or stop another port.
@@ -161,7 +161,7 @@ function Get-LocalOcrSnapshot {
         $ExpectedStart.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     }
     $raw = Invoke-WslCommand -Arguments @(
-        "-d", "Ubuntu", "-e", $PythonPath, "-c", $SnapshotCode,
+        "-d", "Ubuntu", "-e", "bash", $RuntimeScript, "-c", $SnapshotCode,
         [string]$Port, $pidArgument, $startArgument
     )
     try {

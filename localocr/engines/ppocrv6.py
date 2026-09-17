@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .common import combine_predictions, recognized_lines
+
 from paddleocr import PaddleOCR
 
 MODEL_NAME = "PP-OCRv6_medium (det + rec)"
@@ -53,40 +55,12 @@ class PPOCRv6Engine:
         return self._model_name
 
     def predict_image(self, image_path: str) -> dict[str, Any]:
-        ocr = self._ensure()
-        res = ocr.predict(image_path)
-        item = res[0]
-        data = item.json["res"] if hasattr(item, "json") else dict(item)
-        polys = data.get("dt_polys") or data.get("rec_polys") or []
-        texts = data.get("rec_texts") or []
-        scores = data.get("rec_scores") or []
-        boxes = data.get("rec_boxes") or []
-        angle = None
-        dpr = data.get("doc_preprocessor_res")
-        if isinstance(dpr, dict):
-            angle = dpr.get("angle")
-        blocks = []
-        n = max(len(texts), len(polys), len(boxes))
-        for i in range(n):
-            text = texts[i] if i < len(texts) else ""
-            score = float(scores[i]) if i < len(scores) else 0.0
-            poly = polys[i] if i < len(polys) else None
-            box = boxes[i] if i < len(boxes) else None
-            normalized_poly = _norm_poly(poly) if poly else None
-            normalized_box = _norm_box(box) if box else None
-            blocks.append({
-                "type": "text",
-                "text": str(text),
-                "score": round(score, 6),
-                # Keep the legacy bbox shape for existing consumers.  The
-                # additive rect/polygon fields make the coordinate contract
-                # explicit without changing that projection.
-                "bbox": normalized_poly if normalized_poly else normalized_box,
-                "rect": _rect_from_geometry(normalized_box or normalized_poly),
-                "polygon": normalized_poly,
-                "order": i,
-                "coordinate_space": COORDINATE_SPACE,
-            })
+        return combine_predictions(self._ensure().predict(image_path), self._convert_result, options=self.options)
+
+    def _convert_result(self, data: dict[str, Any]) -> dict[str, Any]:
+        dpr = data.get("doc_preprocessor_res") or {}
+        angle = dpr.get("angle") if isinstance(dpr, dict) else None
+        blocks = [{"type": "text", **row} for row in recognized_lines(data)]
         return {
             "engine": self.engine_name,
             "model": self.model_name,

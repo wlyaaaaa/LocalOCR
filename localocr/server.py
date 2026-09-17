@@ -54,7 +54,7 @@ async def lifespan(_app):
 
 app = FastAPI(
     title="LocalOCR API",
-    version="0.6.0",
+    version="0.7.0",
     description="Local-only OCR API for PP-OCRv6_medium, PaddleOCR-VL-1.6, and PP-StructureV3.",
     lifespan=lifespan,
 )
@@ -69,7 +69,7 @@ def get_service() -> OCRService:
         if _service is None:
             _service = OCRService(
                 device="gpu:0",
-                tmp_dir=Path(__file__).resolve().parent.parent / "_pdf_pages" / "api",
+                tmp_dir=Path(os.environ.get("LOCALOCR_PROJECT_ROOT") or Path(__file__).resolve().parent.parent) / "_pdf_pages" / "api",
                 probe_on_start=True,
                 gpu_lease_factory=GpuBrokerLease,
             )
@@ -86,7 +86,7 @@ def health() -> dict:
         "service": "localocr",
         "readiness": "job_state_persistence_failed" if failure else "ready",
         "recovery_job": {key: failure.get(key) for key in ("job_id", "job_key")} if failure else None,
-        "api_version": "0.6.0",
+        "api_version": "0.7.0",
         "server_pid": os.getpid(),
         "server_start_time": psutil.Process().create_time(),
         "gpu": service.gpu_summary,
@@ -123,7 +123,7 @@ def cancel_job(job_key: str):
 def get_observer_projection() -> ObserverProjection:
     if _service is not None:
         return ObserverProjection(_service.job_registry.job_dir)
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(os.environ.get("LOCALOCR_PROJECT_ROOT") or Path(__file__).resolve().parent.parent)
     return ObserverProjection(project_root / "_server" / "jobs")
 
 
@@ -191,11 +191,13 @@ def _error_response(exc: Exception) -> JSONResponse:
         code, status = "invalid_request", 400
     else:
         code, status = "runtime_error", 500
+    if code == "execution_cancelled":
+        context.update(retryable=False, recommendation="stop_user_cancelled")
     payload = {
         "ok": False,
         "status": "active_localocr_task"
         if code in {"gpu_busy", "localocr_busy"}
-        else "failed",
+        else ("cancelled" if code == "execution_cancelled" else "failed"),
         "error_code": code,
         "detail": f"{type(exc).__name__}: {exc}",
         **context,

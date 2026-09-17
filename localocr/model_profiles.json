@@ -27,6 +27,18 @@
         "use_doc_orientation_classify": true,
         "use_doc_unwarping": false,
         "use_textline_orientation": true
+      },
+      "runtime_backend": "paddle",
+      "revision": "PP-OCRv6",
+      "artifact_paths": [
+        "~/.paddlex/official_models/PP-LCNet_x1_0_doc_ori",
+        "~/.paddlex/official_models/PP-OCRv6_medium_det",
+        "~/.paddlex/official_models/PP-OCRv6_medium_rec",
+        "~/.paddlex/official_models/PP-LCNet_x1_0_textline_ori"
+      ],
+      "preprocessing": {
+        "pdf_dpi": 216,
+        "max_render_pixels": 24000000
       }
     },
     {
@@ -53,6 +65,18 @@
         "use_queues": false,
         "use_doc_orientation_classify": true,
         "use_doc_unwarping": true
+      },
+      "runtime_backend": "paddle",
+      "revision": "v1.6",
+      "artifact_paths": [
+        "~/.paddlex/official_models/PP-LCNet_x1_0_doc_ori",
+        "~/.paddlex/official_models/PP-DocLayoutV3",
+        "~/.paddlex/official_models/PaddleOCR-VL-1.6",
+        "~/.paddlex/official_models/UVDoc"
+      ],
+      "preprocessing": {
+        "pdf_dpi": 216,
+        "max_render_pixels": 24000000
       }
     },
     {
@@ -85,6 +109,28 @@
         "use_seal_recognition": true,
         "use_region_detection": true,
         "format_block_content": true
+      },
+      "runtime_backend": "paddle",
+      "revision": "PP-StructureV3",
+      "artifact_paths": [
+        "~/.paddlex/official_models/PP-LCNet_x1_0_doc_ori",
+        "~/.paddlex/official_models/UVDoc",
+        "~/.paddlex/official_models/PP-DocLayout_plus-L",
+        "~/.paddlex/official_models/PP-DocBlockLayout",
+        "~/.paddlex/official_models/PP-OCRv5_server_det",
+        "~/.paddlex/official_models/PP-OCRv5_server_rec",
+        "~/.paddlex/official_models/PP-LCNet_x1_0_textline_ori",
+        "~/.paddlex/official_models/PP-LCNet_x1_0_table_cls",
+        "~/.paddlex/official_models/SLANeXt_wired",
+        "~/.paddlex/official_models/SLANet_plus",
+        "~/.paddlex/official_models/RT-DETR-L_wired_table_cell_det",
+        "~/.paddlex/official_models/RT-DETR-L_wireless_table_cell_det",
+        "~/.paddlex/official_models/PP-OCRv4_server_seal_det",
+        "~/.paddlex/official_models/PP-FormulaNet_plus-L"
+      ],
+      "preprocessing": {
+        "pdf_dpi": 216,
+        "max_render_pixels": 24000000
       }
     }
   ]

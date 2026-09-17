@@ -8,8 +8,8 @@
 
 ## 环境已就绪
 
-- 运行环境：WSL2 Ubuntu 24.04，venv 在 `/root/localocr-venv`
-- PaddlePaddle GPU 3.3.1 (cu129) + PaddleOCR 3.7.0 已装
+- 运行环境：WSL2 Ubuntu 24.04，通过 `/root/localocr-runtimes/current` 选择已验收环境；旧 `/root/localocr-venv` 保留为兼容/回滚入口
+- 目标发布为 PaddlePaddle GPU 3.4.0 (cu129) + PaddleOCR 3.7.0，实际激活状态以 release inspect 和 PCConfig 为准
 - 模型已下载到 `/root/.paddlex/official_models/`（PP-OCRv6_medium + PaddleOCR-VL-1.6 + PP-StructureV3 组件），可离线
 - 模型选择已通过 `localocr/model_profiles.json` 解耦；`ocr` / `vl` / `structure` 是默认 profile 别名，可用 `--model` / `-Model` 指定具体 profile
 - GPU：RTX 5090D，Blackwell sm_120，已验证可用
@@ -53,8 +53,7 @@ E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -Execut
 
 `ocr_smart.ps1` 只以 `/health.active_jobs` 判断 API 是否忙；字段缺失或无法读取是 `readiness_unknown`，不是空闲。
 CLI 与 API 共用 `auto` 分流：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
-先走 `ocr`；空文本或明显低置信结果自动升级到本地 `vl`。文件名提示
-`table/formula/layout/multi/论文/公式/表格/多栏/课件` 等复杂材料时直接走 `vl`。
+先走 `ocr`；逐页判断空文本、低置信及表格/公式内容信号，仅升级问题页到本地 `vl`，不按文件名猜版式。
 复杂版面、表格、公式、多栏材料也可以显式传 `-Engine vl`。
 需要表格 HTML、版面块、公式、印章和区域坐标时显式传 `-Engine structure`。
 如果用户指定具体模型，用 `-Model <profile-id>`；显式模型始终优先，不会被 Smart Router 改写。
@@ -145,7 +144,7 @@ API 写盘任务会按源文件路径、文件内容、请求语义、路由策�
 GPU 冲突也返回 409；broker 不可用/失租约为 503；执行超时为 504。读取完整 `error_code`、`detail` 和 job 定位，不能统称为 HTTP 400。
 `write_outputs=false` 不登记任务或写正式结果。auto 升级失败时，首轮 OCR 只保存在 `partial/<job_key>`，仍返回失败且不能当成正式成功缓存。
 每个结果还包含 `results[].route`，其中 `effective_engine` 是最终引擎，`reason` 是路由原因，
-`signals` 是命中的信号，`confidence` 是规则置信度。auto 首轮 OCR 还包含 `difficulty` 和
+`signals` 是命中的信号，`confidence` 在自动路线上为 `null`，不是校准正确率。auto 首轮 OCR 还包含 `difficulty` 和
 `escalated`；发生升级时 `escalation` 会记录原模型与最终 VL 模型。
 
 ## 路由规则（auto 模式）
@@ -154,14 +153,14 @@ GPU 冲突也返回 409；broker 不可用/失租约为 503；执行超时为 50
 |---|---|
 | 图片（png/jpg/webp/bmp/tif） | PP-OCRv6_medium |
 | 普通扫描 PDF / 表单 / 纯文字 PDF | PP-OCRv6_medium |
-| 文件名提示表格、公式、多栏、论文、课件等复杂 PDF | PaddleOCR-VL-1.6 |
-| auto 首轮 OCR 空文本或明显低置信 | 本地升级到 PaddleOCR-VL-1.6 |
+| 只有文件名变化 | 不改变路由；已知复杂版面可显式选择 VL |
+| auto 中有问题或表格/公式信号的页面 | 仅这些页面本地升级到 PaddleOCR-VL-1.6 |
 | 文件夹 | 按每个文件类型分别路由 |
 
 `--engine` / `-Engine` 决定路由族；`--model` / `-Model` 决定具体 profile。未指定 `model`
 时，`ocr` 默认 `ppocrv6-medium`，`vl` 默认 `paddleocr-vl-1.6`，`structure` 默认 `pp-structure-v3`。新增模型时优先新增
 `localocr/model_profiles.json` 条目和对应 adapter，不要把模型名写死在调用层。
-如果刚改过 profile 或 adapter，先重启 LocalOCR API 再验收，否则旧常驻进程可能仍使用旧 registry。
+修改开发源中的 profile 或 adapter 后，必须创建并验证新候选，切换后重启服务；正式版本从固定源码快照运行，不能只改开发文件就声称生效。
 
 `structure` 不参与默认 `auto` 分流。它是显式高配：表格、版面块、公式、印章和区域检测需要结构化输出时使用。
 当前 PP-StructureV3 在 PaddleOCR 3.7.0 中只接受 `PP-OCRv3/v4/v5`，所以 LocalOCR 的结构化 profile 使用 `PP-OCRv5`，普通 OCR 仍使用 `PP-OCRv6_medium`。
@@ -194,10 +193,14 @@ scripts/run_in_wsl.sh tests/run_tests.py --allow-heavy
 ```
 
 `tests/run_tests.py` 是会依次加载 OCR、VL、Structure 模型并写入测试输出与
-`TEST_REPORT.md` 的重型 GPU 集成测试。它不是普通健康检查，只有用户明确授权本地
+`quality.json` 的重型 GPU 集成测试。它不是普通健康检查，只有用户明确授权本地
 重型集成测试时才可添加 `--allow-heavy`；默认稳定性检查使用 `/health`、单元测试和
 单样例 smoke。运行时会通过 LocalGpuBroker 与 Ollama、ChineseASR 排他。
 
 ## 故障
 
 GPU 报错 / libcuda 找不到 → 见 `docs/TROUBLESHOOTING.md`。
+
+## 发布与结果边界
+
+遵循 [UPGRADING.md](UPGRADING.md)。测试使用非私人合成标准答案并禁用结果缓存；CER 只描述所测样本。每页模型和坐标参照必须保留，`first_pass_evidence` 不应被第二模型覆盖。`execution_cancelled`、`status=cancelled`、`retryable=false` 必须停止处理。中断检查点和失败升级首轮输出只是部分证据；批量跳过项查看 `skipped_inputs` 与 `batch_coverage`。

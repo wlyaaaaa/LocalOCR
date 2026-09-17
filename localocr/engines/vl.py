@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .common import combine_predictions, optional_score
+
 from paddleocr import PaddleOCRVL
 
 MODEL_NAME = "PaddleOCR-VL-1.6"
@@ -65,10 +67,9 @@ class VLEngine:
         return self._model_name
 
     def predict_image(self, image_path: str) -> dict[str, Any]:
-        vl = self._ensure()
-        res = vl.predict(image_path)
-        item = res[0]
-        data = item.json["res"] if hasattr(item, "json") else dict(item)
+        return combine_predictions(self._ensure().predict(image_path), self._convert_result, options=self.options)
+
+    def _convert_result(self, data: dict[str, Any]) -> dict[str, Any]:
         parsing = data.get("parsing_res_list") or []
         dpr = data.get("doc_preprocessor_res") or {}
         angle = dpr.get("angle") if isinstance(dpr, dict) else None
@@ -152,12 +153,7 @@ def _rect_from_geometry(geometry):
 
 
 def _optional_score(value):
-    if value is None:
-        return None
-    try:
-        return round(float(value), 6)
-    except (TypeError, ValueError):
-        return None
+    return optional_score(value)
 
 
 def _is_non_text_label(label: str) -> bool:

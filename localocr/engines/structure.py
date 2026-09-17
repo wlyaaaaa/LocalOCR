@@ -5,6 +5,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from .common import combine_predictions, recognized_lines
+
 from paddleocr import PPStructureV3
 
 MODEL_NAME = "PP-StructureV3 + PP-OCRv5"
@@ -81,10 +83,9 @@ class StructureV3Engine:
         return self._model_name
 
     def predict_image(self, image_path: str) -> dict[str, Any]:
-        engine = self._ensure()
-        res = engine.predict(image_path)
-        item = res[0]
-        data = item.json["res"] if hasattr(item, "json") else dict(item)
+        return combine_predictions(self._ensure().predict(image_path), self._convert_result, options=self.options)
+
+    def _convert_result(self, data: dict[str, Any]) -> dict[str, Any]:
         dpr = data.get("doc_preprocessor_res") or {}
         angle = dpr.get("angle") if isinstance(dpr, dict) else None
 
@@ -203,34 +204,8 @@ def _blocks_from_overall_ocr(overall: dict[str, Any]) -> list[dict[str, Any]]:
 def _text_lines_from_overall_ocr(overall: dict[str, Any]) -> list[dict[str, Any]]:
     """Return raw OCR lines without mixing them into layout blocks."""
 
-    polys = overall.get("dt_polys") or overall.get("rec_polys") or []
-    texts = overall.get("rec_texts") or []
-    scores = overall.get("rec_scores") or []
-    boxes = overall.get("rec_boxes") or []
-    lines: list[dict[str, Any]] = []
-    n = max(len(texts), len(polys), len(boxes))
-    for i in range(n):
-        poly = _norm_poly(polys[i]) if i < len(polys) else None
-        box = _norm_box(boxes[i]) if i < len(boxes) else None
-        legacy_bbox = poly if poly else box
-        raw_score = scores[i] if i < len(scores) else 0.0
-        try:
-            score = round(float(raw_score), 6)
-        except (TypeError, ValueError):
-            score = 0.0
-        lines.append(
-            {
-                "line_index": i,
-                "text": str(texts[i] if i < len(texts) else ""),
-                "score": score,
-                "bbox": legacy_bbox,
-                "rect": _rect_from_geometry(box or poly),
-                "polygon": poly,
-                "coordinate_space": COORDINATE_SPACE,
-                "source": "overall_ocr_res",
-            }
-        )
-    return lines
+    return [{**row, "line_index": i, "source": "overall_ocr_res"}
+            for i, row in enumerate(recognized_lines(overall))]
 
 
 def _structure_details(data: Mapping[str, Any]) -> dict[str, Any]:

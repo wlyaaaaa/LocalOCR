@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+
 import math
+from dataclasses import asdict
 import shutil
 import tempfile
 import threading
@@ -11,11 +14,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .difficulty import POLICY_VERSION as DIFFICULTY_POLICY_VERSION
-from .difficulty import OCRDifficultyAssessment, assess_ocr_difficulty
+from .difficulty import OCRDifficultyAssessment, assess_ocr_difficulty, assess_ocr_pages
 from .gpu_broker import GpuBrokerLease
 from .job_registry import JobClaim, JobRegistry
 from .model_registry import (
     ModelProfile,
+    load_model_profiles,
     resolve_model_reference,
     select_model_profile_with_route,
 )
@@ -26,7 +30,8 @@ from .objective_result import (
     write_objective_sidecar,
 )
 from .outputs import build_display_summary, write_isolated_projections, write_outputs
-from .router import collect_files
+from .router import collect_files, collect_input_inventory
+from .release_identity import execution_identity, execution_sha256
 from .runtime import (
     DEFAULT_TIMEOUT_SEC,
     MAX_TIMEOUT_SEC,
@@ -35,7 +40,7 @@ from .runtime import (
 )
 
 
-AUTO_ROUTING_POLICY_VERSION = f"smart-router-v4:supervised:{DIFFICULTY_POLICY_VERSION}"
+AUTO_ROUTING_POLICY_VERSION = f"smart-router-v5:page-selective:{DIFFICULTY_POLICY_VERSION}"
 OUTPUT_PROJECTION_VERSION = "display-summary-v1"
 
 
@@ -54,7 +59,7 @@ class OCRService:
         runtime: InferenceRuntime | None = None,
     ) -> None:
         self.device = device
-        self.project_root = Path(__file__).resolve().parent.parent
+        self.project_root = Path(os.environ.get("LOCALOCR_PROJECT_ROOT") or Path(__file__).resolve().parent.parent)
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.isolated_timeout_sec = isolated_timeout_sec
@@ -207,7 +212,7 @@ class OCRService:
                     http_status=409,
                 )
             return response["results"][0]
-        profile = resolve_model_reference(model_choice or engine_choice)
+        profile = context["profiles"].get(model_choice or engine_choice) or resolve_model_reference(model_choice or engine_choice)
         self._progress({"stage": "starting_worker"})
         with self._state_lock:
             self._active.update(engine=profile.engine, model_id=profile.id)
@@ -215,18 +220,28 @@ class OCRService:
         payload = {
             "path": str(path),
             "profile_id": profile.id,
+            "model_profile": asdict(profile),
+            "profile_revision": context["identities"][profile.id],
+            "page_indices": context.get("page_indices"),
             "device": self.device,
             "tmp_dir": str(context["scratch"] / "pages"),
             "probe_gpu": self._probe_gpu,
+            "source_sha256": context["source_sha256"],
+            "checkpoint_dir": str(context["scratch"] / "checkpoints" / context["identities"][profile.id]),
             "lease": getattr(lease, "worker_binding", None),
         }
-        return self._runtime.predict(
-            payload,
-            deadline=context["deadline"],
-            cancel=context["cancel"],
-            check_lease=self._checkpoint,
-            progress=self._progress,
-        )
+        try:
+            return self._runtime.predict(
+                payload, deadline=context["deadline"], cancel=context["cancel"],
+                check_lease=self._checkpoint, progress=self._progress,
+            )
+        except ExecutionError as exc:
+            if not exc.context.get("partial_result"):
+                from .checkpoints import read_partial
+                partial = read_partial(Path(payload["checkpoint_dir"]), payload)
+                if partial:
+                    exc.context["partial_result"] = partial
+            raise
 
     def _annotate(
         self,
@@ -248,7 +263,10 @@ class OCRService:
             request_hash=job_key,
             caller_binding=caller_binding,
             evidence_persisted=persisted,
+            execution_status=result.get("execution_status", "completed"),
+            failure=result.get("failure"),
         )
+        annotated["execution_identities"] = dict(result.get("execution_identities") or {})
         annotated["display_summary"] = build_display_summary(annotated)
         return annotated
 
@@ -307,7 +325,7 @@ class OCRService:
         self._raise_if_terminal_persistence_failed()
         request_started = datetime.now(timezone.utc)
         request_deadline = time.monotonic() + timeout
-        files = collect_files([str(path) for path in inputs], recursive)
+        files, skipped_inputs = collect_input_inventory([str(path) for path in inputs], recursive)
         if not files:
             raise FileNotFoundError("No supported image or PDF was found.")
         output_dir = (
@@ -330,15 +348,23 @@ class OCRService:
                 raise ExecutionError(
                     "service_stopping", "LocalOCR is stopping.", http_status=503
                 )
+            registry = load_model_profiles()
             profile, route = select_model_profile_with_route(
-                source, engine_choice=engine_choice, model_choice=model_choice
+                source, engine_choice=engine_choice, model_choice=model_choice, registry=registry
             )
+            profiles = {profile.id: profile}
+            if engine_choice == "auto" and model_choice is None:
+                fallback = resolve_model_reference("vl", registry)
+                profiles[fallback.id] = fallback
+            identities = {key: execution_sha256(value) for key, value in profiles.items()}
+
             request = self.job_registry.build_request(
                 source,
                 profile,
                 output_dir,
                 request_variant=_request_variant(
-                    engine_choice, model_choice, caller_binding, device=self.device
+                    engine_choice, model_choice, caller_binding, device=self.device,
+                    fallback_identity=identities.get(registry.defaults["vl"]),
                 ),
             )
             if write_files:
@@ -366,6 +392,9 @@ class OCRService:
                 with self._state_lock:
                     self._execution = {
                         "claim": claim,
+                        "profiles": profiles,
+                        "identities": identities,
+                        "source_sha256": request.source_sha256,
                         "cancel": threading.Event(),
                         "deadline": request_deadline,
                         "thread_id": threading.get_ident(),
@@ -429,19 +458,23 @@ class OCRService:
                                 )
                                 assessment = assess_ocr_difficulty(result)
                                 route_dict = _assessed_route(route_dict, assessment)
+                                page_assessments = assess_ocr_pages(result)
+                                route_dict["page_assessments"] = page_assessments
+                                escalate_indices = [p["page_index"] for p in page_assessments if p["should_escalate"]]
                                 if initial["objective_outcome"] == "no_text_detected":
                                     route_dict["signals"] = list(
                                         route_dict.get("signals") or []
                                     ) + ["ocr_no_text_confirmed"]
-                                elif assessment.should_escalate:
-                                    profile = resolve_model_reference("vl")
+                                elif escalate_indices:
+                                    profile = fallback
                                     route_dict = _escalated_route(
                                         route_dict, assessment, profile
                                     )
+                                    route_dict["escalated_page_indices"] = escalate_indices
                                     self._progress({"stage": "escalating"})
-                                    result = self.process_file(
-                                        snapshot, profile.engine, profile.id
-                                    )
+                                    self._execution["page_indices"] = escalate_indices
+                                    second = self.process_file(snapshot, profile.engine, profile.id)
+                                    result = _merge_escalated_pages(result, second, escalate_indices, initial_profile, profile)
                                     result["source_file"] = str(source)
                             self._checkpoint()
                             if (
@@ -454,6 +487,7 @@ class OCRService:
                                     "Original source changed during OCR; result was not published.",
                                     http_status=409,
                                 )
+                            result["execution_identities"] = identities
                             result["route"] = route_dict
                             result = self._annotate(
                                 result,
@@ -483,17 +517,24 @@ class OCRService:
                 except BaseException as exc:
                     self._runtime.close()
                     partial_outputs = None
-                    if initial is not None and profile.engine == "vl" and write_files:
+                    worker_partial = exc.context.pop("partial_result", None) if isinstance(exc, ExecutionError) else None
+                    if initial is None and worker_partial is not None:
+                        initial = worker_partial
+                        initial_profile = profile
+                    if initial is not None and write_files:
                         if (
                             source.is_file()
                             and file_sha256(source) == request.source_sha256
                         ):
                             try:
+                                initial["execution_status"] = "cancelled" if getattr(exc, "code", "") == "execution_cancelled" else "failed"
+                                initial["failure"] = {"code": getattr(exc, "code", type(exc).__name__), "detail": str(exc)}
+                                initial["execution_identities"] = identities
                                 initial["route"] = {
                                     **route_dict,
-                                    "effective_engine": "ocr",
+                                    "effective_engine": initial_profile.engine,
                                     "model_id": initial_profile.id,
-                                    "escalation_failed": True,
+                                    "escalation_failed": profile.id != initial_profile.id,
                                     "escalation_error_code": getattr(
                                         exc, "code", type(exc).__name__
                                     ),
@@ -547,6 +588,11 @@ class OCRService:
                             job_id=request.job_id,
                             job_key=request.job_key,
                             partial_output_files=partial_outputs,
+                            results=results,
+                            completed_count=len(results),
+                            failed_input=str(source),
+                            unprocessed_inputs=[str(p) for p in files[len(results)+1:]],
+                            retryable=False if exc.code == "execution_cancelled" else None,
                         )
                     else:
                         exc.localocr_context = {
@@ -563,6 +609,8 @@ class OCRService:
                 self._execution_lock.release()
         return {
             "ok": True,
+            "batch_coverage": "partial" if skipped_inputs else "complete",
+            "skipped_inputs": skipped_inputs,
             "count": len(results),
             "device": self.device,
             "gpu": self.gpu_summary,
@@ -582,6 +630,7 @@ def _request_variant(
     caller_binding: dict | None = None,
     *,
     device: str = "gpu:0",
+    fallback_identity: str | None = None,
 ) -> str:
     model = model_choice or "<default>"
     variant = (
@@ -590,6 +639,7 @@ def _request_variant(
     )
     if engine_choice == "auto" and model_choice is None:
         variant += f";policy={AUTO_ROUTING_POLICY_VERSION}"
+        variant += f";fallback={fallback_identity or execution_sha256(resolve_model_reference('vl'))}"
     binding_hash = caller_binding_sha256(caller_binding)
     if binding_hash:
         variant += f";caller_binding={binding_hash}"
@@ -634,7 +684,8 @@ def _escalated_route(
         "effective_engine": target_profile.engine,
         "reason": "ocr_result_difficulty_prefers_vl",
         "route_reason": "ocr_result_difficulty_prefers_vl",
-        "confidence": 0.9,
+        "confidence": None,
+        "confidence_kind": "uncalibrated_policy",
         "signals": list(route.get("signals") or [])
         + [f"ocr_difficulty:{reason}" for reason in assessment.reasons],
         "model_id": target_profile.id,
@@ -646,3 +697,29 @@ def _escalated_route(
             "to_model_id": target_profile.id,
         },
     }
+
+
+def _merge_escalated_pages(first, second, indices, first_profile, second_profile):
+    first_pages = first.get("pages") or []
+    expected_indices = [p.get("page_index", i) for i, p in enumerate(first_pages)]
+    replacements = second.get("pages") or []
+    observed = [p.get("page_index") for p in replacements]
+    if sorted(observed) != sorted(indices) or len(set(observed)) != len(observed):
+        raise ExecutionError("page_coverage_mismatch", "Second-pass page indices do not match the requested subset")
+    by_index = {p["page_index"]: p for p in replacements}
+    pages = []
+    for index, page in zip(expected_indices, first_pages):
+        if index in by_index:
+            replacement = dict(by_index[index])
+            replacement["first_pass_evidence"] = {
+                "model_id": first_profile.id, "blocks": page.get("blocks") or [],
+                "coordinate_reference": page.get("coordinate_reference"),
+            }
+            replacement.update(model_id=second_profile.id, engine_key=second_profile.engine)
+            pages.append(replacement)
+        else:
+            pages.append({**page, "model_id": first_profile.id, "engine_key": first_profile.engine})
+    return {**first, "pages": pages, "model_id": second_profile.id,
+            "engine_key": second_profile.engine, "model": second.get("model"),
+            "engine": second.get("engine"), "models_used": [first_profile.id, second_profile.id],
+            "mixed_page_models": len(indices) != len(first_pages)}

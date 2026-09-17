@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import ctypes
 import multiprocessing
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -31,7 +31,18 @@ class ExecutionError(RuntimeError):
         self.context: dict[str, Any] = {}
 
 
-def _process_identity(pid: int) -> tuple[int, float] | None:
+def _process_identity(pid: int) -> tuple[int, int | float] | None:
+    if sys.platform.startswith("linux"):
+        # /proc start ticks are stable across NTP/WSL wall-clock corrections.
+        # Keep PID-reuse protection without using boot-time-derived epoch time.
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            fields = raw.rsplit(")", 1)[1].split()
+            if fields[0] in {"Z", "X", "x"}:
+                return None
+            return pid, int(fields[19])  # Linux /proc stat field 22.
+        except (OSError, ValueError, IndexError):
+            return None
     try:
         process = psutil.Process(pid)
         if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
@@ -41,7 +52,7 @@ def _process_identity(pid: int) -> tuple[int, float] | None:
         return None
 
 
-def _guard_process_group(parent_identity: tuple[int, float], worker_pid: int) -> None:
+def _guard_process_group(parent_identity: tuple[int, int | float], worker_pid: int) -> None:
     """A tiny POSIX guard also removes descendants after an uncatchable parent exit."""
     while True:
         if (
@@ -63,9 +74,9 @@ def _predict(
     # before a probe, model import, model load, or inference in this process.
     device = payload["device"]
     uses_gpu = device.lower().startswith(("gpu", "cuda"))
-    from .model_registry import get_engine, resolve_model_reference
+    from .model_registry import ModelProfile, get_engine, resolve_model_reference
 
-    profile = resolve_model_reference(payload["profile_id"])
+    profile = ModelProfile(**payload["model_profile"]) if payload.get("model_profile") else resolve_model_reference(payload["profile_id"])
     if uses_gpu:
         from .gpu_broker import verify_inherited_gpu_lease
 
@@ -78,53 +89,69 @@ def _predict(
     if uses_gpu and payload.get("probe_gpu") and "gpu" not in cache:
         from .gpu_probe import format_probe, probe_gpu
 
-        cache["gpu"] = format_probe(probe_gpu())
+        if profile.runtime_backend == "torch":
+            from .gpu_probe import probe_torch_gpu
+            info = probe_torch_gpu(device=device)
+        else:
+            info = probe_gpu() if device in {"gpu:0", "cuda:0"} else probe_gpu(device=device)
+        cache["gpu"] = format_probe(info)
     emit({"stage": "loading_model", "gpu": cache.get("gpu")})
 
-    from .pdf_utils import render_pdf_to_files, rendered_pdf_page_metadata
+    from .pdf_utils import input_page_count, iter_input_pages, uniform_page_hint
     from .router import is_pdf
 
     if "engine" not in cache:
-        cache["engine"] = get_engine(profile.id, device=device)
+        cache["engine"] = get_engine(profile, device=device)
     engine = cache["engine"]
     ensure = getattr(engine, "_ensure", None)
     if callable(ensure):
         ensure()
     emit({"stage": "recognizing", "loaded_model": profile.id, "gpu": cache.get("gpu")})
     source = Path(payload["path"])
-    if is_pdf(source):
-        emit({"stage": "rendering_pdf"})
-        images = render_pdf_to_files(source, out_dir=Path(payload["tmp_dir"]))
-        pages = []
-        for index, image_path in enumerate(images):
-            emit(
-                {
-                    "stage": "recognizing",
-                    "completed_pages": index,
-                    "total_pages": len(images),
-                }
-            )
+    expected = input_page_count(source)
+    selected = payload.get("page_indices")
+    pages = []
+    result = {"engine": engine.engine_name, "model": engine.model_name,
+              "device": device, "expected_page_count": expected, "pages": pages}
+    from .checkpoints import save_header, save_page
+    checkpoint_dir = Path(payload["checkpoint_dir"]) if payload.get("checkpoint_dir") else None
+    if checkpoint_dir is not None:
+        save_header(checkpoint_dir, {**result, "model_id": profile.id, "engine_key": profile.engine}, payload)
+    try:
+        for index, image_path, metadata in iter_input_pages(
+            source, Path(payload["tmp_dir"]), indices=selected,
+            dpi=float(profile.preprocessing.get("pdf_dpi", 216)),
+            max_pixels=int(profile.preprocessing.get("max_render_pixels", 24_000_000)),
+        ):
+            emit({"stage": "recognizing", "completed_pages": len(pages), "total_pages": expected})
             page_result = engine.predict_image(str(image_path))
-            for page in page_result.get("pages", []):
-                page["page_index"] = index
-                page.update(rendered_pdf_page_metadata(image_path))
-                pages.append(page)
-        result = {
-            "engine": engine.engine_name,
-            "model": engine.model_name,
-            "device": device,
-            "expected_page_count": len(images),
-            "pages": pages,
-        }
-        emit(
-            {
-                "stage": "recognized",
-                "completed_pages": len(images),
-                "total_pages": len(images),
-            }
-        )
-    else:
-        result = engine.predict_image(str(source))
+            returned = page_result.get("pages") or []
+            if len(returned) != 1:
+                raise ExecutionError("page_coverage_mismatch", f"Input page {index} produced {len(returned)} result pages")
+            page = returned[0]
+            page["page_index"] = index
+            page["model_id"] = profile.id
+            page["engine_key"] = profile.engine
+            page["page_angle"] = page.get("page_angle", page_result.get("page_angle"))
+            page.update(metadata)
+            page["routing_uniform_hint"] = uniform_page_hint(image_path)
+            if profile.engine == "ocr":
+                from .difficulty import page_structure_signals
+                page["structure_signals"] = page_structure_signals(page, image_path)
+            pages.append(page)
+            if checkpoint_dir is not None:
+                save_page(checkpoint_dir, page)
+    except BaseException as exc:
+        if pages:
+            error = exc if isinstance(exc, ExecutionError) else ExecutionError("inference_failed", f"{type(exc).__name__}: {exc}")
+            error.context["partial_result"] = {**result, "pages": list(pages), "model_id": profile.id,
+                                                "engine_key": profile.engine, "source_file": str(source)}
+            if error is exc:
+                raise
+            raise error from exc
+        raise
+    result["requested_page_indices"] = list(range(expected)) if selected is None else list(selected)
+    emit({"stage": "recognized", "completed_pages": len(pages), "total_pages": expected})
     result.update(
         source_file=str(source), engine_key=profile.engine, model_id=profile.id
     )
@@ -134,22 +161,19 @@ def _predict(
 
 
 def _worker_main(
-    connection: Connection, parent_identity: tuple[int, float], predictor=None
+    connection: Connection, parent_identity: tuple[int, int | float], predictor=None
 ) -> None:
     guard_pid = None
     if os.name == "posix":
         os.setsid()
         worker_pid = os.getpid()
-        # A guard in the same dedicated process group is required: PDEATHSIG
-        # alone kills only the direct worker, not any native-library children.
+        # Guard the coordinator process, not the transient thread that spawned us.
+        # PR_SET_PDEATHSIG follows that thread and incorrectly kills warm workers
+        # when API executor threads retire. The guard also reaps ordinary children.
         guard_pid = os.fork()
         if guard_pid == 0:
             connection.close()
             _guard_process_group(parent_identity, worker_pid)
-        try:
-            ctypes.CDLL(None).prctl(1, signal.SIGKILL)
-        except (AttributeError, OSError):
-            pass
     if _process_identity(parent_identity[0]) != parent_identity:
         os._exit(1)
     cache: dict[str, Any] = {}
@@ -176,6 +200,9 @@ def _worker_main(
                         "request_id": request_id,
                         "detail": f"{type(exc).__name__}: {exc}",
                         "traceback_tail": traceback.format_exc()[-2000:],
+                        "code": getattr(exc, "code", "inference_failed"),
+                        "http_status": getattr(exc, "http_status", 500),
+                        "context": getattr(exc, "context", {}),
                     }
                 )
     except (EOFError, BrokenPipeError, OSError):
@@ -204,6 +231,7 @@ class InferenceRuntime:
         self._process = None
         self._connection: Connection | None = None
         self.profile_id: str | None = None
+        self.profile_revision: str | None = None
         self.loaded = False
         self.generation: str | None = None
         self.peak_memory_bytes = 0
@@ -214,9 +242,9 @@ class InferenceRuntime:
         process = self._process
         return process.pid if process is not None and process.is_alive() else None
 
-    def _start(self, profile_id: str) -> None:
+    def _start(self, profile_id: str, revision: str | None = None) -> None:
         with self._state_lock:
-            if self.pid is not None and self.profile_id == profile_id:
+            if self.pid is not None and self.profile_id == profile_id and self.profile_revision == revision:
                 return
             self.close()
             connection, child_connection = self._context.Pipe()
@@ -235,6 +263,7 @@ class InferenceRuntime:
             self._process = process
             self._connection = connection
             self.profile_id = profile_id
+            self.profile_revision = revision
             self.generation = uuid.uuid4().hex
             self.loaded = False
 
@@ -264,7 +293,7 @@ class InferenceRuntime:
             )
         try:
             check_lease()
-            self._start(payload["profile_id"])
+            self._start(payload["profile_id"], payload.get("profile_revision"))
             connection = self._connection
             process = self._process
             assert connection is not None and process is not None
@@ -323,7 +352,9 @@ class InferenceRuntime:
                         check_lease()
                         return message["result"]
                     elif message["type"] == "error":
-                        raise ExecutionError("inference_failed", message["detail"])
+                        error = ExecutionError(message.get("code", "inference_failed"), message["detail"], http_status=message.get("http_status", 500))
+                        error.context.update(message.get("context") or {})
+                        raise error
                     else:
                         raise ExecutionError(
                             "worker_protocol_error", "Unknown inference response type."
@@ -334,10 +365,17 @@ class InferenceRuntime:
                         f"Inference worker exited with code {process.exitcode}.",
                     )
         except (EOFError, BrokenPipeError, OSError) as exc:
+            process = self._process
+            exit_code = None
+            if process is not None:
+                process.join(timeout=0.2)
+                exit_code = process.exitcode
             self.close()
-            raise ExecutionError(
-                "worker_exited", f"Inference IPC closed: {type(exc).__name__}."
-            ) from exc
+            error = ExecutionError(
+                "worker_exited", f"Inference IPC closed: {type(exc).__name__}; worker exit code={exit_code}."
+            )
+            error.context["worker_exit_code"] = exit_code
+            raise error from exc
         except BaseException:
             self.close()
             raise

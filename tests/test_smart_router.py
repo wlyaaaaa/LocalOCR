@@ -17,7 +17,8 @@ class SmartRouterTest(unittest.TestCase):
         self.assertEqual(decision.effective_engine, "ocr")
         self.assertEqual(decision.route_reason, "image_prefers_ocr")
         self.assertIn("image", decision.signals)
-        self.assertGreaterEqual(decision.confidence, 0.8)
+        self.assertIsNone(decision.confidence)
+        self.assertEqual(decision.to_dict()["confidence_kind"], "uncalibrated_policy")
 
     def test_auto_routes_plain_pdf_to_ocr_for_fast_default(self) -> None:
         from localocr.smart_router import choose_smart_route
@@ -33,7 +34,7 @@ class SmartRouterTest(unittest.TestCase):
         self.assertIn("pdf", decision.signals)
         self.assertIn("plain_pdf_default", decision.signals)
 
-    def test_auto_routes_complex_pdf_name_to_vl(self) -> None:
+    def test_auto_does_not_infer_layout_from_filename(self) -> None:
         from localocr.smart_router import choose_smart_route
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,10 +43,9 @@ class SmartRouterTest(unittest.TestCase):
 
             decision = choose_smart_route(pdf, engine_choice="auto")
 
-        self.assertEqual(decision.effective_engine, "vl")
-        self.assertEqual(decision.route_reason, "pdf_complex_layout_prefers_vl")
-        self.assertIn("complex_keyword:formula", decision.signals)
-        self.assertIn("complex_keyword:table", decision.signals)
+        self.assertEqual(decision.effective_engine, "ocr")
+        self.assertEqual(decision.route_reason, "pdf_plain_text_prefers_ocr")
+        self.assertFalse(any(s.startswith("complex_keyword:") for s in decision.signals))
 
     def test_explicit_engine_is_preserved(self) -> None:
         from localocr.smart_router import choose_smart_route

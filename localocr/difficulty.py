@@ -5,7 +5,7 @@ from numbers import Real
 from typing import Any
 
 
-POLICY_VERSION = "ocr-confidence-v1"
+POLICY_VERSION = "ocr-page-quality-v2"
 LOW_SCORE_THRESHOLD = 0.80
 VERY_LOW_SCORE_THRESHOLD = 0.50
 MEAN_SCORE_TRIGGER = 0.78
@@ -80,3 +80,47 @@ def assess_ocr_difficulty(result: dict[str, Any]) -> OCRDifficultyAssessment:
 
 def _round_optional(value: float | None) -> float | None:
     return None if value is None else round(value, 6)
+
+
+def assess_ocr_pages(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Do not let many easy pages hide a difficult page; uniform is only a hint."""
+    assessments = []
+    for index, page in enumerate(result.get("pages") or []):
+        assessment = assess_ocr_difficulty({"pages": [page]})
+        reasons = list(assessment.reasons)
+        if page.get("routing_uniform_hint") and reasons == ["empty_text"]:
+            reasons = []
+        reasons.extend(page.get("structure_signals") or [])
+        if assessment.metrics["text_block_count"] and not assessment.metrics["scored_block_count"]:
+            reasons.append("recognition_confidence_unavailable")
+        assessments.append({**assessment.to_dict(), "page_index": page.get("page_index", index),
+                            "reasons": reasons, "should_escalate": bool(reasons)})
+    return assessments
+
+
+def page_structure_signals(page: dict[str, Any], image_path) -> list[str]:
+    """Cheap content evidence for a second pass, not a layout/correctness oracle."""
+    signals = []
+    text = "\n".join(str(b.get("text") or "") for b in page.get("blocks") or [])
+    if any(token in text for token in ("∑", "Σ", "∫", "\\frac", "softmax(", "sqrt(")):
+        signals.append("formula_content")
+    try:
+        import cv2
+        import numpy as np
+        image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return signals
+        # Only the routing preview is reduced; the OCR input retains its resolution.
+        factor = min(1.0, 1600 / max(image.shape))
+        if factor < 1:
+            image = cv2.resize(image, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+        mask = cv2.threshold(image, 185, 255, cv2.THRESH_BINARY_INV)[1]
+        horizontal = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((1, max(30, image.shape[1] // 10)), np.uint8))
+        vertical = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((max(30, image.shape[0] // 10), 1), np.uint8))
+        crosses = cv2.bitwise_and(horizontal, vertical)
+        count = cv2.connectedComponents(crosses)[0] - 1
+        if count >= 6:
+            signals.append("ruled_table_content")
+    except Exception:
+        pass  # Optional preview is never a reason to lose completed OCR output.
+    return signals

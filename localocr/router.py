@@ -26,20 +26,25 @@ def route_engine(path: Path, override: str = "auto") -> str:
     return choose_smart_route(path, engine_choice=override).effective_engine
 
 
-def collect_files(inputs: list[str], recursive: bool) -> list[Path]:
+def collect_input_inventory(inputs: list[str], recursive: bool) -> tuple[list[Path], list[dict[str, str]]]:
     files: list[Path] = []
+    skipped: list[dict[str, str]] = []
     for raw in inputs:
-        p = Path(raw)
-        if p.is_file():
-            if is_supported(p):
-                files.append(p)
-            else:
-                print(f"[WARN] 不支持的文件类型，跳过：{p}")
-        elif p.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for child in sorted(p.glob(pattern)):
-                if child.is_file() and is_supported(child):
-                    files.append(child)
+        path = Path(raw)
+        if path.is_file():
+            candidates = [path]
+        elif path.is_dir():
+            candidates = sorted(p for p in path.glob("**/*" if recursive else "*") if p.is_file())
         else:
-            print(f"[WARN] 不存在：{p}")
-    return sorted(set(files), key=lambda x: str(x).lower())
+            skipped.append({"path": str(path), "status": "missing"})
+            continue
+        for candidate in candidates:
+            if is_supported(candidate):
+                files.append(candidate)
+            else:
+                skipped.append({"path": str(candidate), "status": "unsupported"})
+    return sorted(set(files), key=lambda p: str(p).lower()), skipped
+
+
+def collect_files(inputs: list[str], recursive: bool) -> list[Path]:
+    return collect_input_inventory(inputs, recursive)[0]

@@ -7,20 +7,7 @@ from typing import Any
 from .router import is_image, is_pdf
 
 VALID_REQUESTED_ENGINES = {"auto", "ocr", "vl", "structure"}
-COMPLEX_PDF_KEYWORDS = (
-    "table",
-    "formula",
-    "layout",
-    "multi",
-    "column",
-    "lecture",
-    "paper",
-    "论文",
-    "公式",
-    "表格",
-    "多栏",
-    "课件",
-)
+
 
 
 @dataclass(frozen=True)
@@ -29,7 +16,7 @@ class SmartRouteDecision:
     requested_model: str | None
     effective_engine: str
     route_reason: str
-    confidence: float
+    confidence: float | None
     signals: tuple[str, ...]
     model_id: str | None = None
 
@@ -44,6 +31,7 @@ class SmartRouteDecision:
             "reason": self.route_reason,
             "route_reason": self.route_reason,
             "confidence": self.confidence,
+            "confidence_kind": "explicit_selection" if self.requested_engine != "auto" or self.requested_model else "uncalibrated_policy",
             "signals": list(self.signals),
             "model_id": self.model_id,
         }
@@ -84,30 +72,19 @@ def choose_smart_route(
             requested_model=None,
             effective_engine="ocr",
             route_reason="image_prefers_ocr",
-            confidence=0.9,
+            confidence=None,
             signals=_base_signals(path, "image"),
         )
 
     if is_pdf(path):
         signals = list(_base_signals(path, "pdf"))
-        keyword_signals = _complex_keyword_signals(path)
-        signals.extend(keyword_signals)
-        if keyword_signals:
-            return SmartRouteDecision(
-                requested_engine=engine_choice,
-                requested_model=None,
-                effective_engine="vl",
-                route_reason="pdf_complex_layout_prefers_vl",
-                confidence=0.82,
-                signals=tuple(signals),
-            )
         signals.append("plain_pdf_default")
         return SmartRouteDecision(
             requested_engine=engine_choice,
             requested_model=None,
             effective_engine="ocr",
             route_reason="pdf_plain_text_prefers_ocr",
-            confidence=0.72,
+            confidence=None,
             signals=tuple(signals),
         )
 
@@ -116,7 +93,7 @@ def choose_smart_route(
         requested_model=None,
         effective_engine="ocr",
         route_reason="unknown_type_prefers_ocr",
-        confidence=0.5,
+        confidence=None,
         signals=_base_signals(path, "unknown_type"),
     )
 
@@ -153,8 +130,3 @@ def _base_signals(path: Path, kind: str) -> tuple[str, ...]:
     elif size >= 8 * 1024 * 1024:
         signals.append("large_file")
     return tuple(signals)
-
-
-def _complex_keyword_signals(path: Path) -> list[str]:
-    name = path.name.casefold()
-    return [f"complex_keyword:{keyword}" for keyword in COMPLEX_PDF_KEYWORDS if keyword in name]

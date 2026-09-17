@@ -174,8 +174,8 @@ class PdfCoordinateContractTest(unittest.TestCase):
             engine = SimpleNamespace(engine_name="Fake", model_name="Fake",
                                      predict_image=lambda _path: {"pages": [{"page_index": 0, "blocks": []}]})
             with patch("localocr.model_registry.get_engine", return_value=engine), patch(
-                "localocr.pdf_utils.render_pdf_to_files", return_value=[image]
-            ):
+                "localocr.pdf_utils.iter_input_pages", return_value=[(0, image, rendered_pdf_page_metadata(image))]
+            ), patch("localocr.pdf_utils.input_page_count", return_value=1), patch("localocr.pdf_utils.uniform_page_hint", return_value=False):
                 result = _predict({"device": "cpu", "profile_id": "ppocrv6-medium", "path": "sample.pdf", "tmp_dir": tmp}, {}, lambda _event: None)
             page = result["pages"][0]
         self.assertTrue(page["rendered_pdf_pixels"])

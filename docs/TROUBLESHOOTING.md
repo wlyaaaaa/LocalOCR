@@ -22,7 +22,7 @@ export PADDLE_PDX_MODEL_SOURCE=modelscope
 
 ## 3. VL 报 DependencyError: requires additional dependencies
 
-**解决**：装 VL 依赖（已含在 install_wsl.sh）：
+**解决**：在隔离候选中按 lock 文件恢复，不污染 active venv。以下是相关依赖名称，确切版本由发布锁文件管理：
 ```bash
 pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
     premailer regex safetensors scikit-learn scipy sentencepiece tiktoken tokenizers
@@ -39,7 +39,7 @@ pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
 
 ## 5. Windows 原生 Paddle GPU 在 Blackwell 上不可用
 
-本项目经本机验证的运行路径是 WSL2 + Linux Paddle 3.3.1 cu129 wheel，包含 sm_120；
+本项目经本机验证的运行路径是 WSL2 + Linux Paddle 3.4.0 cu129 候选及发布验收，包含 sm_120；
 不要混装 Windows wheel、CPU wheel 或其他 CUDA 构建。版本升级以官方支持信息和本机真实回归为准，不能只看基础探针成功。
 
 ## 6. PaddleOCR 报 oneDNN / PIR 错误
@@ -51,7 +51,7 @@ UVDoc 是纸张形变矫正，不是截图锐化；现行普通 OCR 默认关闭
 
 ## 7. pip 装包超时
 
-清华/阿里云镜像偶有波动。install_wsl.sh 用阿里云 + `--retries 5 --timeout 90`。
+清华/阿里云镜像偶有波动。install_wsl.sh 使用 PyPI 与官方 cu129 索引，`--retries 3 --timeout 90`，仅安装独立候选。
 可手动换源重试。
 
 ## 8. API 服务启动后健康检查超时
@@ -191,3 +191,7 @@ ValueError: Invalid OCR version: PP-OCRv6. Supported values are ['PP-OCRv3', 'PP
 
 **解决**：LocalOCR 的 `pp-structure-v3` profile 固定使用 `PP-OCRv5`。普通图片 OCR 仍用 `PP-OCRv6_medium`；
 不要为了统一版本把结构化 profile 改成 `PP-OCRv6`。
+
+## 14. 换版、完整性与取消
+
+换模型后仍读旧结果，检查真实 `artifact_paths`、`revision`、`execution_identities` 以及运行中的 source snapshot；不删除全部历史结果掩盖绑定缺陷。`page_coverage_mismatch` 或 alignment error 必须修适配，不补空页/强行错配坐标。`execution_cancelled` / `retryable=false` 必须停止，不换引擎重试。候选失败保持原环境，不把失败结果称为有效回滚。升级、激活与回滚命令见 [UPGRADING.md](UPGRADING.md)。

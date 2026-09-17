@@ -1,50 +1,18 @@
 #!/usr/bin/env bash
-# LocalOCR 一键安装脚本（在 WSL2 Ubuntu 内运行）。
-# 用法（在 Windows PowerShell）：wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
-set -e
-
-VENV=/root/localocr-venv
-PROJ=/mnt/e/Projects/Tools/LocalOCR
-
-echo "==== [1/5] 系统依赖 ===="
-apt-get update -qq
-apt-get install -y -qq python3.12-venv python3-pip curl
-
-echo "==== [2/5] 创建 venv ===="
-if [ ! -d "$VENV" ]; then
-    python3 -m venv "$VENV"
-fi
-"$VENV/bin/python" -m pip install -q --upgrade pip setuptools wheel
-
-echo "==== [3/5] 安装 PaddlePaddle GPU (cu129, 支持 Blackwell sm_120) ===="
-env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-    "$VENV/bin/python" -m pip install -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ \
-    "paddlepaddle-gpu==3.3.1"
-
-echo "==== [4/5] 安装 PaddleOCR 3.7.0 + VL 依赖 ===="
-PYPI=https://mirrors.aliyun.com/pypi/simple/
-env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-    "$VENV/bin/python" -m pip install -i $PYPI --timeout 90 --retries 5 \
-    "paddleocr==3.7.0"
-env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-    "$VENV/bin/python" -m pip install -i $PYPI --timeout 90 --retries 5 \
-    beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl premailer regex \
-    safetensors scikit-learn scipy sentencepiece tiktoken tokenizers
-env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-    "$VENV/bin/python" -m pip install -i $PYPI --timeout 90 --retries 5 \
-    -e "$PROJ"
-
-echo "==== [5/5] 预下载所有模型到本地（ModelScope，离线可用） ===="
-export LD_LIBRARY_PATH=/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}
-export PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0
-export PADDLE_PDX_DISABLE_DEV_MODEL_WL=true
-export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true
-export PADDLE_PDX_MODEL_SOURCE=modelscope
-cd "$PROJ"
-"$VENV/bin/python" scripts/download_models.py --allow-heavy --timeout-sec 1200
-
-echo ""
-echo "==== 安装完成 ===="
-echo "所有预热与GPU探针均已在受监督租约内完成。"
-echo "用法：在 Windows 里把文件拖到 start.bat 上，或："
-echo "  wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli \"路径\""
+# Install an isolated candidate; never overwrite or automatically activate production.
+set -euo pipefail
+PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+NAME=${1:-paddle-3.4.0-$(date +%Y%m%d-%H%M%S)}
+[[ "$NAME" =~ ^[a-zA-Z0-9._-]+$ && "$NAME" != current && "$NAME" != previous ]] || { echo "Invalid candidate name" >&2; exit 2; }
+CANDIDATE=/root/localocr-runtimes/$NAME
+[[ ! -e "$CANDIDATE" && ! -L "$CANDIDATE" ]] || { echo "Candidate already exists; inspect instead of overwriting" >&2; exit 2; }
+export PIP_CACHE_DIR=${PIP_CACHE_DIR:-/mnt/e/Downloads/localocr-pip-cache}
+mkdir -p /root/localocr-runtimes "$PIP_CACHE_DIR"
+python3.12 -m venv "$CANDIDATE"
+"$CANDIDATE/bin/python" -m pip install --timeout 90 --retries 3 --index-url https://pypi.org/simple --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/ -r "$PROJECT/requirements/runtime-paddle-cu129.lock.txt"
+"$CANDIDATE/bin/python" -m pip install --no-deps --no-build-isolation -e "$PROJECT"
+"$CANDIDATE/bin/python" -m pip check
+"$CANDIDATE/bin/python" "$PROJECT/scripts/manage_runtime.py" freeze
+printf 'Candidate installed, not activated: %s\n' "$CANDIDATE"
+printf 'Validate: LOCALOCR_RUNTIME=%q %q scripts/manage_runtime.py validate --allow-heavy\n' "$CANDIDATE" "$PROJECT/scripts/run_in_wsl.sh"
+printf 'Activate only after passing: LOCALOCR_RUNTIME=%q %q scripts/manage_runtime.py activate\n' "$CANDIDATE" "$PROJECT/scripts/run_in_wsl.sh"

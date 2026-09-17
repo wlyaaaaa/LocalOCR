@@ -1,6 +1,6 @@
 # LocalOCR
 
-本地高质量中文 OCR 系统，基于 **PaddleOCR 3.7.0** + **PaddlePaddle GPU 3.3.1 (CUDA 12.9)**，
+本地高质量中文 OCR 系统，基于 **PaddleOCR 3.7.0** + **PaddlePaddle GPU 3.4.0 (CUDA 12.9)**，
 面向 **RTX 5090D（Blackwell sm_120）** + WSL2 Ubuntu 24.04。
 
 ## 特性
@@ -8,7 +8,7 @@
 - **中文优先**：默认 PP-OCRv6_medium 检测+识别，保留方向检测和文本行旋转纠正；普通截图/平面扫描默认不做 UVDoc 形变矫正，避免把原本清晰的文字和坐标拉坏。
 - **复杂文档用 VL**：论文、表格、公式、多栏排版等复杂 PDF/图片可自动或显式走 **PaddleOCR-VL-1.6**。
 - **结构化高配可选**：表格、版面块、公式、印章、区域检测可显式走 **PP-StructureV3 + PP-OCRv5**（`-Engine structure` / `--engine structure`）。
-- **Smart Router v4 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；复杂文件名信号仍可直接进入 VL。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
+- **Smart Router v5 自动分流**：图片和普通扫描 PDF / 表单先走 PP-OCRv6_medium；空文本或明显低置信结果自动升级到本地 PaddleOCR-VL-1.6；文件名不决定路由，升级只重跑问题页。每次结果返回 `route.reason` / `route.signals` / `route.confidence`，自动首轮 OCR 还返回 `route.difficulty` / `route.escalated`。
 - **客观结果与空文本语义**：每个完成结果增加 `objective_outcome=text_detected|no_text_detected|indeterminate`、`execution_status`、`coverage`、`quality` 和 `failure`。模型返回空 block/空文本不会被当成“确实无文字”；只有完整覆盖、无排除范围且独立像素检测或 adapter telemetry 生成的规范负向证据才会是 `no_text_detected`。内存结果的 `evidence.verification_status` 保持 `not_persisted`，写入 sidecar 后才为 `verified`。规范 `media.objective-result.v1` sidecar 按请求 hash 隔离并在 cache hit 时校验 schema、尺寸、哈希和输入/模型身份。
 - **人话状态摘要**：API、TXT、Markdown 和 JSON 同时返回确定性的 `display_summary`，说明文字块数量、覆盖、质量、平均置信度、自动升级和警告；它只投影现有客观字段，不从空文本推断“无文字”，也不替代原始 OCR 或 objective sidecar。
 - **GPU 加速**：强制 GPU 探针，Blackwell sm_120 原生支持，不静默回退 CPU。
@@ -22,13 +22,17 @@
 - **任务级缓存/去重**：API 会按源文件、请求语义、路由策略、模型 profile 和输出目录生成 `job_key`；相同任务完成后返回 `cache_status=cache_hit`，运行中重复提交会返回 `status=active_localocr_task` 而不是再启动一个 OCR。
 - **Codex 防卡入口**：`ocr_smart.ps1` 以 `/health.active_jobs` 判断忙碌，保留 HTTP 错误正文与任务定位；不再以进程名探测代替任务状态。默认整个请求执行期限 300 秒，默认调用端等待 330 秒。
 
+## 版本隔离与结果正确性
+
+文字与识别后坐标严格配对；PDF/TIFF 按实际页数/帧数验收并有界逐页处理。模型配置、实际权重、实现与运行库共同绑定缓存。正式版本包含独立解释器与源码快照，切换前必须通过验收，旧版本保留并验证。取消是不可自动重试的终态。详见 [升级指南](docs/UPGRADING.md)。
+
 ## 环境
 
 | 项 | 值 |
 |---|---|
 | OS（运行） | WSL2 Ubuntu 24.04 LTS |
 | GPU | RTX 5080 / 5090D（Blackwell，sm_120，CUDA 12.9 原生） |
-| PaddlePaddle | 3.3.1 GPU，cu129 构建（wheel 自带 CUDA/cuDNN/NCCL） |
+| PaddlePaddle | 3.4.0 GPU，cu129 构建（wheel 自带 CUDA/cuDNN/NCCL） |
 | PaddleOCR | 3.7.0 |
 | Python | 3.12（WSL venv） |
 
@@ -45,8 +49,8 @@
 
 默认决策：
 
-- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v4 先走 OCR；空文本或明显低置信时自动在同一任务内升级到本地 VL。
-- 复杂表格、公式、多栏、论文、课件、整页复杂版面：显式 `-Engine vl`，或让带复杂文件名信号的 PDF 由 `auto` 路由到 VL。
+- 普通图片、截图、普通扫描 PDF、法律表单、空白表格、送达地址确认书：用 `-Engine auto`，由 Smart Router v5 先走 OCR；空文本、低置信或明确结构信号按页在同一任务内升级到本地 VL，保留首轮文字与坐标证据。
+- 复杂表格、公式、多栏、论文、课件、整页复杂版面：显式 `-Engine vl`，`auto` 先 OCR，再根据逐页质量与表格/公式内容信号仅升级问题页，不根据文件名猜测版式。
 - 需要表格 HTML、版面块、公式、印章、区域检测、坐标：显式 `-Engine structure`。
 - 需要指定或替换具体模型：用 `-Model <profile-id>` / `--model <profile-id>`，并先改 `localocr/model_profiles.json`，不要把模型名硬编码进 wrapper 或服务层。
 - 遇到 `status=active_localocr_task`、`status=client_timeout`、`job_key`、`cache_status=cache_hit` 时，先查 `/jobs/<job_key>`、输出目录和后台任务，不要盲目重复提交同一文件。
@@ -90,8 +94,7 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 ```
 
-脚本会：创建 venv → 装 paddlepaddle-gpu cu129 → 装 paddleocr 3.7.0 → 预下载所有模型。
-约 20-40 分钟，取决于网速和 PP-StructureV3 组件缓存状态。完成后 WSL 缓存里都有模型，后续完全离线。
+脚本只创建独立候选环境，按 `requirements/runtime-paddle-cu129.lock.txt` 安装并固定该版本源码，不覆盖或自动激活当前环境。模型预下载仍需显式授权 `--allow-heavy`；随后验证依赖、单元测试和合成 GPU 质量。切换及回滚见 [升级指南](docs/UPGRADING.md)。
 
 ### 2. 使用
 
@@ -215,7 +218,7 @@ localocr/        源码
   model_registry.py / model_profiles.json
                  模型 profile 注册表；把模型选择与推理实现解耦
   router.py      扩展名和文件收集基础工具
-  smart_router.py Smart Router v3 的低成本预路由
+  smart_router.py Smart Router v5 的低成本预路由
   difficulty.py  OCR 结果级困难判定；仅 auto 首轮 OCR 可触发本地 VL 升级
   engines/       PP-OCRv6、VL 与 PP-StructureV3 adapter，实现统一 predict_image 输出协议
   job_registry.py 文件型任务缓存、去重和 job 状态 manifest

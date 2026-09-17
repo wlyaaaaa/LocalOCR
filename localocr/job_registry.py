@@ -15,6 +15,7 @@ from typing import Any
 import psutil
 
 from .model_registry import ModelProfile, resolve_model_reference
+from .release_identity import execution_sha256
 from .objective_result import (
     config_sha256,
     file_sha256,
@@ -22,7 +23,7 @@ from .objective_result import (
 )
 
 SCHEMA_VERSION = 1
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 _LEGACY_PID_TIME_GRACE_SECONDS = 2.0
 _REGISTRY_GUARD_NAME = ".job-registry.guard"
 
@@ -135,6 +136,7 @@ class JobRegistry:
         output = Path(output_dir)
         payload = {
             "cache_version": CACHE_VERSION,
+            "execution_identity": execution_sha256(profile),
             "engine": profile.engine,
             "output_dir": _norm_path(output),
             "profile_id": profile.id,
@@ -413,6 +415,12 @@ class JobRegistry:
         if not _output_files_exist(output_files):
             return False
         result = manifest.get("result") or {}
+        for model_id, identity in (result.get("execution_identities") or {}).items():
+            try:
+                if execution_sha256(resolve_model_reference(model_id)) != identity:
+                    return False
+            except (KeyError, ValueError, OSError):
+                return False
         output_hashes = (
             result.get("output_file_sha256") or manifest.get("output_file_sha256") or {}
         )

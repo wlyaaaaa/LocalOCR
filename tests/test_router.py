@@ -25,7 +25,7 @@ class RouterCompatibilityTest(unittest.TestCase):
             pdf = Path(tmp) / "lecture-formula-table-layout.pdf"
             pdf.write_bytes(b"%PDF-1.7 complex layout")
 
-            self.assertEqual(route_engine(pdf, "auto"), "vl")
+            self.assertEqual(route_engine(pdf, "auto"), "ocr")
 
     def test_route_engine_preserves_explicit_override(self) -> None:
         from localocr.router import route_engine

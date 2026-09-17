@@ -91,7 +91,7 @@ class ModelRegistryTest(unittest.TestCase):
         def engine(*_args, **_kwargs):
             self.assertEqual(os.environ.get("CUDA_MODULE_LOADING"), "EAGER")
             events.append("engine")
-            return SimpleNamespace(predict_image=lambda _: {"pages": []})
+            return SimpleNamespace(engine_name="Fake", model_name="Fake", predict_image=lambda _: {"pages": [{"blocks": []}]})
 
         fake_probe = SimpleNamespace(probe_gpu=probe, format_probe=lambda _: "fake GPU")
         with patch.dict(os.environ, {"CUDA_MODULE_LOADING": "LAZY"}), \
@@ -99,19 +99,19 @@ class ModelRegistryTest(unittest.TestCase):
              patch("localocr.gpu_broker.verify_inherited_gpu_lease", side_effect=lambda _: events.append("lease")), \
              patch("localocr.model_registry.get_engine", side_effect=engine):
             result = _predict({"device": "gpu:0", "profile_id": "paddleocr-vl-1.6",
-                               "probe_gpu": True, "lease": {}, "path": "fake.png"}, {}, lambda _: None)
+                               "probe_gpu": True, "lease": {}, "path": str(Path(__file__).parent / "samples/probe_text.png"), "tmp_dir": os.environ.get("TEMP", "/tmp")}, {}, lambda _: None)
         self.assertEqual(events, ["lease", "probe", "engine"])
         self.assertEqual(result["cuda_module_loading"], "EAGER")
 
     def test_explicit_cpu_never_probes_gpu_or_alters_cuda_environment(self):
         from localocr.runtime import _predict
 
-        fake_engine = SimpleNamespace(predict_image=lambda _: {"pages": []})
+        fake_engine = SimpleNamespace(engine_name="Fake", model_name="Fake", predict_image=lambda _: {"pages": [{"blocks": []}]})
         with patch.dict(os.environ, {"CUDA_MODULE_LOADING": "LAZY"}), \
              patch("localocr.gpu_broker.verify_inherited_gpu_lease") as lease, \
              patch("localocr.model_registry.get_engine", return_value=fake_engine):
             result = _predict({"device": "cpu", "profile_id": "paddleocr-vl-1.6",
-                               "probe_gpu": True, "path": "fake.png"}, {}, lambda _: None)
+                               "probe_gpu": True, "path": str(Path(__file__).parent / "samples/probe_text.png"), "tmp_dir": os.environ.get("TEMP", "/tmp")}, {}, lambda _: None)
             self.assertEqual(os.environ["CUDA_MODULE_LOADING"], "LAZY")
         lease.assert_not_called()
         self.assertNotIn("cuda_module_loading", result)

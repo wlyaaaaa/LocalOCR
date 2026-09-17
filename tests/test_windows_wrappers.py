@@ -56,7 +56,7 @@ class WindowsWrapperTest(unittest.TestCase):
         self._assert_start_converts_chinese_windows_path_before_cli(executable)
 
     def test_drag_drop_batch_launches_selected_input(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)
             batch = folder / "start.bat"
             batch.write_bytes((ROOT / "start.bat").read_bytes())
@@ -88,9 +88,12 @@ class WindowsWrapperTest(unittest.TestCase):
             self.assertEqual(json.loads(capture.read_text(encoding="utf-8")), [input_windows])
 
     def _assert_start_converts_chinese_windows_path_before_cli(self, executable: str) -> None:
-        script_path = self._windows_script_path(ROOT / "start.ps1")
-
-        with tempfile.TemporaryDirectory(dir=ROOT / "tests") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Run the exact release wrapper bytes from a real Windows temporary path,
+            # even when its immutable source snapshot lives on the WSL filesystem.
+            script_copy = Path(temp_dir) / "start.ps1"
+            script_copy.write_bytes((ROOT / "start.ps1").read_bytes())
+            script_path = self._windows_script_path(script_copy)
             input_path = Path(temp_dir) / "中文目录" / "示例 图片.png"
             input_path.parent.mkdir()
             input_path.write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -189,7 +192,8 @@ function wsl {{
         self.assertIn("Get-ServerByPid", script)
         self.assertIn("Assert-TargetOwnsPort", script)
         self.assertIn("Test-WindowsPortOccupied", script)
-        self.assertIn("/root/localocr-venv/bin/python", script)
+        self.assertIn("scripts/run_in_wsl.sh", script)
+        self.assertNotIn("/root/localocr-venv/bin/python", script)
         self.assertIn("psutil", script)
         self.assertIn("GraceSec", script)
         self.assertIn('"TERM"', script)
@@ -301,7 +305,8 @@ function wsl {{
         self.assertIn('".pdf"', script)
         self.assertIn('$RequestedEngine -ne "auto"', script)
         self.assertIn("pdf_plain_text_prefers_ocr", script)
-        self.assertIn("pdf_complex_layout_prefers_vl", script)
+        self.assertNotIn("pdf_complex_layout_prefers_vl", script)
+        self.assertNotIn("$complexKeywords", script)
         self.assertNotIn("simple_pdf_prefers_ocr", script)
 
     def test_ocr_smart_passes_requested_engine_to_api_router(self) -> None:
