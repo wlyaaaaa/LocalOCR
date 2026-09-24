@@ -1,7 +1,8 @@
 [project]
 name = "localocr"
 version = "0.7.0"
-description = "Local high-quality Chinese OCR on RTX 5090D via PaddleOCR 3.7 + PaddlePaddle GPU cu129"
+description = "Local high-quality Chinese OCR via PaddleOCR 3.7 + PaddlePaddle GPU cu129"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
 dependencies = [
     "paddlepaddle-gpu>=3.3.1,<3.5",

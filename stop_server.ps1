@@ -11,10 +11,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $PSScriptRoot 'scripts/windows_paths.ps1')
 $ServerDir = Join-Path $ScriptDir "_server"
 # Legacy cleanup only; this file is never the current server identity source.
 $PidPath = Join-Path $ServerDir "wsl-server.pid"
-$RuntimeScript = "/mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh"
+$ProjectWsl = ConvertTo-LocalOcrWslPath -Path $PSScriptRoot
+$RuntimeScript = "$ProjectWsl/scripts/run_in_wsl.sh"
 
 # This query is intentionally a fixed, one-shot psutil lookup. It does not
 # import LocalOCR/Paddle, scan by a broad process name, or stop another port.
@@ -39,7 +41,7 @@ def port_number(argv):
 def same_project(cwd):
     if not cwd:
         return False
-    return os.path.normcase(os.path.realpath(cwd)).rstrip("/") == "/mnt/e/Projects/Tools/LocalOCR"
+    return os.path.normcase(os.path.realpath(cwd)) == os.path.normcase(os.path.realpath(sys.argv[4]))
 
 
 def process_record(process):
@@ -162,7 +164,7 @@ function Get-LocalOcrSnapshot {
     }
     $raw = Invoke-WslCommand -Arguments @(
         "-d", "Ubuntu", "-e", "bash", $RuntimeScript, "-c", $SnapshotCode,
-        [string]$Port, $pidArgument, $startArgument
+        [string]$Port, $pidArgument, $startArgument, $ProjectWsl
     )
     try {
         return $raw | ConvertFrom-Json -ErrorAction Stop

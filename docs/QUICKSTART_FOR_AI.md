@@ -1,10 +1,12 @@
 # AI 助手快速上手 LocalOCR
 
+以下 Windows 命令在 LocalOCR 项目根目录执行，仓库可位于任意已挂载盘符；WSL 路径使用 `wslpath` 解析。
+
 > 本文件写给 AI 助手（和人类）看：如何在本机启动这套本地 OCR。
 
 ## 一句话
 
-在 Windows 里把图片/PDF/文件夹拖到 `E:\Projects\Tools\LocalOCR\start.bat` 上即可。结果在 `E:\Projects\Tools\LocalOCR\outputs\`（每个文件产出 `.txt`/`.md`/`.json`）。
+在 Windows 里把图片/PDF/文件夹拖到 `.\start.bat` 上即可。结果在 `.\outputs\`（每个文件产出 `.txt`/`.md`/`.json`）。
 
 ## 环境已就绪
 
@@ -33,7 +35,7 @@
 等价的 WSL 命令：
 
 ```bash
-cd /mnt/e/Projects/Tools/LocalOCR
+cd "<LocalOCR 的 WSL 根目录>"
 scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs --timeout-sec 300
 ```
 
@@ -42,13 +44,13 @@ scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs -
 高频 OCR、Codex 调用、批量读取课程图片/PDF 时，优先启动常驻服务：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\start_server.ps1
+.\start_server.ps1
 ```
 
 Codex / AI 助手默认先用 smart wrapper，避免 PowerShell 长时间卡住当前回合：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
 ```
 
 `ocr_smart.ps1` 只以 `/health.active_jobs` 判断 API 是否忙；字段缺失或无法读取是 `readiness_unknown`，不是空闲。
@@ -64,7 +66,7 @@ CLI 与 API 共用 `auto` 分流：简单扫描 PDF、法律表单、送达地�
 只想省 token 做预检，不提交 OCR：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
+.\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 ```
 
 健康检查：
@@ -84,14 +86,14 @@ Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>/cancel" -Method Post
 底层 wrapper 仍可直接识别一个路径：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+.\ocr_once.ps1 "tests/samples/sample_chat_screenshot.png" -Engine ocr
 ```
 
 默认执行期限是 300 秒，覆盖加载模型、识别和同一请求中的所有文件；超时会终止整个推理子树并释放租约。
 确有更长任务时，同时给执行和客户端等待足够时间（执行上限 7200 秒）：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
 ```
 
 `-TimeoutSec` 仅是 HTTP 传输等待；`-OuterTimeoutSec` 是 smart 的客户端总等待；
@@ -104,19 +106,19 @@ API 本身不导入 Paddle；OCR/VL/Structure 共用一个可替换的温热 wor
 如果只是一次性读取图片/PDF，或马上要启动 Ollama/本地大模型，可以让调用结束后自动释放：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_once.ps1 "E:\某图片.png" -Engine auto -StopAfter
+.\ocr_once.ps1 "E:\某图片.png" -Engine auto -StopAfter
 ```
 
 启动其他重 GPU 任务前，也可以显式释放：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\release_resources.ps1
+.\release_resources.ps1
 ```
 
 停止服务：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\stop_server.ps1
+.\stop_server.ps1
 ```
 
 API 请求体：
@@ -181,7 +183,8 @@ CLI 和 API 都以返回的 `results[].output_files` 为准，正式结果按源
 ## 重装/预热模型
 
 ```powershell
-wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
+$projectWsl = wsl.exe -d Ubuntu -e wslpath -a -u $PWD.Path
+wsl.exe -d Ubuntu -e bash "$projectWsl/scripts/install_wsl.sh"
 ```
 
 ## 测试

@@ -1,5 +1,7 @@
 # 故障排除
 
+以下 Windows 命令在 LocalOCR 项目根目录执行，仓库可位于任意已挂载盘符；WSL 路径使用 `wslpath` 解析。
+
 ## 1. GPU 探针失败 / libcuda.so 找不到
 
 **现象**：`The third-party dynamic library (libcuda.so) is not configured correctly`
@@ -72,7 +74,7 @@ UVDoc 是纸张形变矫正，不是截图锐化；现行普通 OCR 默认关闭
 确需停止时使用下面的身份核验入口；它核对目标端口、项目 cwd、服务模块、PID 和启动时间，不按模糊进程名杀进程：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\stop_server.ps1
+.\stop_server.ps1
 ```
 
 ## 9. `ocr_once.ps1` 长任务请求超时
@@ -86,14 +88,14 @@ E:\Projects\Tools\LocalOCR\stop_server.ps1
 **解决**：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
 ```
 
 只有现实工作确需更长时才提高执行期限（最多 7200 秒）；不要用加长 timeout 掩盖卡死。先检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18665/health
-Get-Content E:\Projects\Tools\LocalOCR\_server\localocr-api.log -Tail 80
+Get-Content .\_server\localocr-api.log -Tail 80
 ```
 
 `active_jobs` 会给出 `job_id`、`job_key`、`stage`、`worker_pid` 和 `deadline_at`。
@@ -109,8 +111,8 @@ HTTP 504 / `execution_timeout` 表示服务已中止该 worker 子树；取消�
 Codex / AI 助手优先改用 smart wrapper，它有自己的外层等待上限，会先返回短 JSON 状态：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
+.\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 ```
 
 常见短状态：
@@ -125,7 +127,7 @@ E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -TriageOnly
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18665/health
-Get-ChildItem E:\Projects\Tools\LocalOCR\outputs\api | Sort-Object LastWriteTime -Descending | Select-Object -First 10
+Get-ChildItem .\outputs\api | Sort-Object LastWriteTime -Descending | Select-Object -First 10
 ```
 
 如果短 JSON 或成功结果里有 `job_key`，优先直接查任务状态：
@@ -143,7 +145,7 @@ API 会把写盘任务登记在 `_server/jobs`。同一源文件、模型 profil
 简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF 优先使用 `auto`，默认先走 OCR：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto
+.\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto
 ```
 
 直接 CLI 与 `ocr_once.ps1` 共用相同的 auto 逻辑。VL 升级失败时，首轮 OCR 的可读产物会保留在
@@ -167,13 +169,13 @@ E:\Projects\Tools\LocalOCR\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto
 LocalOCR 的温热 worker 可能持有最后使用的模型。启动 Ollama、本地大模型或其他重 GPU 任务前：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\release_resources.ps1
+.\release_resources.ps1
 ```
 
 如果是一次性 OCR，也可以直接：
 
 ```powershell
-E:\Projects\Tools\LocalOCR\ocr_once.ps1 "E:\path\image.png" -StopAfter
+.\ocr_once.ps1 "E:\path\image.png" -StopAfter
 ```
 
 只有 stop 的 PID/启动身份与端口核验全部成功，release 才会报告已释放。

@@ -30,8 +30,8 @@ from .objective_result import (
     write_objective_sidecar,
 )
 from .outputs import build_display_summary, write_isolated_projections, write_outputs
-from .router import collect_files, collect_input_inventory
-from .release_identity import execution_identity, execution_sha256
+from .router import collect_input_inventory
+from .release_identity import execution_sha256
 from .runtime import (
     DEFAULT_TIMEOUT_SEC,
     MAX_TIMEOUT_SEC,
@@ -708,7 +708,7 @@ def _merge_escalated_pages(first, second, indices, first_profile, second_profile
         raise ExecutionError("page_coverage_mismatch", "Second-pass page indices do not match the requested subset")
     by_index = {p["page_index"]: p for p in replacements}
     pages = []
-    for index, page in zip(expected_indices, first_pages):
+    for index, page in zip(expected_indices, first_pages, strict=True):
         if index in by_index:
             replacement = dict(by_index[index])
             replacement["first_pass_evidence"] = {

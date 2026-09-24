@@ -44,7 +44,39 @@ class ServerLifecycleTest(unittest.TestCase):
         self.patcher = patch.object(server, "_service", self.service)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        self.client = TestClient(server.app)
+        self.client = TestClient(server.app, base_url="http://127.0.0.1:18665")
+
+    def test_untrusted_host_is_rejected_before_work(self):
+        for host in ("evil.example:18665", "127.0.0.1.evil.example", "evil.example"):
+            self.assertEqual(self.client.get("/health", headers={"Host": host}).status_code, 400)
+            self.assertEqual(self.client.post("/ocr/path", json={"path": "sample.png"}, headers={"Host": host}).status_code, 400)
+        self.assertEqual(self.service.calls, [])
+
+    def test_json_body_requires_json_content_type(self):
+        for headers in ({}, {"Content-Type": "text/plain"}, {"Content-Type": "application/x-www-form-urlencoded"}):
+            response = self.client.post("/ocr/path", content='{"path":"sample.png"}', headers=headers)
+            self.assertEqual(response.status_code, 415)
+        self.assertEqual(self.service.calls, [])
+
+    def test_foreign_browser_origin_is_rejected_for_every_entry(self):
+        self.service.active_jobs = [{"job_key": "active"}]
+        for origin in ("https://evil.example", "null", "http://127.0.0.1:9999", "http://127.0.0.1:invalid"):
+            for path in ("/ocr/path", "/ocr/file", "/jobs/active/cancel"):
+                response = self.client.post(path, headers={"Origin": origin}, content=b"")
+                self.assertEqual(response.status_code, 403, (path, origin))
+            self.assertEqual(self.client.get("/health", headers={"Origin": origin}).status_code, 403)
+        self.assertEqual(self.service.calls, [])
+
+    def test_native_and_same_origin_clients_keep_json_and_upload_support(self):
+        response = self.client.post("/ocr/path", content='{"path":"sample.png"}',
+                                    headers={"Origin": "http://127.0.0.1:18665", "Content-Type": "application/json; charset=utf-8"})
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post("/ocr/file", files={"file": ("sample.png", b"synthetic", "image/png")})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.service.calls), 2)
+
+    def test_localhost_remains_an_allowed_host(self):
+        self.assertEqual(self.client.get("/health", headers={"Host": "localhost:18665"}).status_code, 200)
 
     def test_health_is_lightweight_and_distinguishes_gpu_not_yet_probed(self):
         response = self.client.get("/health")

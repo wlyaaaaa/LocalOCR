@@ -72,7 +72,7 @@ def combine_predictions(predictions: Any, convert, *, options: Mapping[str, Any]
     """Consume generators and every SDK result, retaining each page's own frame."""
     combined: dict = {}
     pages: list[dict] = []
-    for index, item in enumerate(predictions):
+    for item in predictions:
         data = result_data(item)
         result = convert(data)
         if not combined:

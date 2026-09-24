@@ -136,7 +136,7 @@ def _blocks_from_parsing(
     excluded_regions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
-    for i, raw in enumerate(parsing):
+    for raw in parsing:
         label = str(raw.get("block_label") or "text")
         btype = _block_type(label)
         content = str(raw.get("block_content") or "")

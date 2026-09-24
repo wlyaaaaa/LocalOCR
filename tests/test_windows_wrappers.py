@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+WINDOWS_AVAILABLE = os.name == "nt" or all(shutil.which(tool) for tool in ("pwsh.exe", "cmd.exe", "wslpath"))
 
 
 def _decode_process_output(raw: bytes) -> str:
@@ -40,10 +42,17 @@ class WindowsWrapperTest(unittest.TestCase):
             text=True,
         ).stdout.strip()
 
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_start_converts_chinese_windows_path_before_cli(self) -> None:
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
         self._assert_start_converts_chinese_windows_path_before_cli(executable)
 
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
+    def test_start_resolves_relative_input_against_powershell_location(self) -> None:
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        self._assert_start_converts_chinese_windows_path_before_cli(executable, relative=True)
+
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_drag_drop_host_converts_chinese_windows_path_before_cli(self) -> None:
         batch = (ROOT / "start.bat").read_text(encoding="utf-8")
         launch = next(
@@ -55,6 +64,7 @@ class WindowsWrapperTest(unittest.TestCase):
             executable += ".exe"
         self._assert_start_converts_chinese_windows_path_before_cli(executable)
 
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_drag_drop_batch_launches_selected_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)
@@ -87,14 +97,16 @@ class WindowsWrapperTest(unittest.TestCase):
             self.assertTrue(capture.is_file(), _decode_process_output(completed.stdout))
             self.assertEqual(json.loads(capture.read_text(encoding="utf-8")), [input_windows])
 
-    def _assert_start_converts_chinese_windows_path_before_cli(self, executable: str) -> None:
+    def _assert_start_converts_chinese_windows_path_before_cli(self, executable: str, *, relative: bool = False) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Run the exact release wrapper bytes from a real Windows temporary path,
             # even when its immutable source snapshot lives on the WSL filesystem.
             script_copy = Path(temp_dir) / "start.ps1"
             script_copy.write_bytes((ROOT / "start.ps1").read_bytes())
+            (script_copy.parent / "scripts").mkdir()
+            shutil.copy2(ROOT / "scripts/windows_paths.ps1", script_copy.parent / "scripts/windows_paths.ps1")
             script_path = self._windows_script_path(script_copy)
-            input_path = Path(temp_dir) / "中文目录" / "示例 图片.png"
+            input_path = Path(temp_dir) / "中文目录" / "示例 $100 $(echo PWNED) `echo text` ' 图片.png"
             input_path.parent.mkdir()
             input_path.write_bytes(b"\x89PNG\r\n\x1a\n")
             capture_path = Path(temp_dir) / "wsl-arguments.json"
@@ -105,18 +117,26 @@ class WindowsWrapperTest(unittest.TestCase):
             expected_wsl_path = f"/mnt/{normalized_input[0].lower()}{normalized_input[2:]}"
 
             quoted_script = script_path.replace("'", "''")
-            quoted_input = input_windows.replace("'", "''")
+            selected_input = str(input_path.relative_to(script_copy.parent)) if relative else input_windows
+            quoted_input = selected_input.replace("'", "''")
             quoted_capture = capture_windows.replace("'", "''")
+            working_dir = self._windows_script_path(script_copy.parent).replace("'", "''")
             command = f"""
-function wsl {{
-    param([string]$d, [string]$e, [string]$c)
+function wsl.exe {{
+    if ($args[3] -eq 'wslpath') {{
+        $full = $args[-1].Replace('\\', '/')
+        '/mnt/' + $full.Substring(0, 1).ToLowerInvariant() + $full.Substring(2)
+        $global:LASTEXITCODE = 0
+        return
+    }}
     [IO.File]::WriteAllText(
         '{quoted_capture}',
-        (@('-d', $d, '-e', $e, '-c', $c) | ConvertTo-Json -Compress),
+        (ConvertTo-Json -InputObject @($args) -Compress),
         [Text.UTF8Encoding]::new($false)
     )
     $global:LASTEXITCODE = 0
 }}
+Set-Location -LiteralPath '{working_dir}'
 & '{quoted_script}' '{quoted_input}'
 """
             completed = subprocess.run(
@@ -131,7 +151,12 @@ function wsl {{
             self.assertEqual(completed.returncode, 0, stderr)
             self.assertTrue(capture_path.is_file(), _decode_process_output(completed.stdout))
             wsl_arguments = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertIn(expected_wsl_path, wsl_arguments[-1])
+            self.assertEqual(wsl_arguments[-1], expected_wsl_path)
+            expected_root = self._windows_script_path(script_copy.parent).replace("\\", "/")
+            expected_root = f"/mnt/{expected_root[0].lower()}{expected_root[2:]}"
+            self.assertEqual(wsl_arguments[:8], ["-d", "Ubuntu", "-e", "bash", expected_root + "/scripts/run_in_wsl.sh", "-m", "localocr.cli", expected_wsl_path])
+            self.assertNotIn("-c", wsl_arguments)
+            self.assertNotIn("-lc", wsl_arguments)
 
     def test_start_server_uses_named_mutex(self) -> None:
         script = (ROOT / "start_server.ps1").read_text(encoding="utf-8")
@@ -181,7 +206,8 @@ function wsl {{
         self.assertIn("run_in_wsl.sh", script)
         self.assertIn("--host", script)
         self.assertIn("--port", script)
-        self.assertIn("wsl-launcher.log", script)
+        self.assertIn("$ScriptDir,$LogPath", script)
+        self.assertNotIn("'-lc'", script)
         self.assertNotIn("Start-Process", script)
 
     def test_stop_server_uses_verified_pid_start_identity_and_target_port(self) -> None:
@@ -235,6 +261,7 @@ function wsl {{
     def test_ocr_smart_wrapper_exists(self) -> None:
         self.assertTrue((ROOT / "ocr_smart.ps1").exists())
 
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_ocr_smart_triage_does_not_require_path(self) -> None:
         script_path = self._windows_script_path(ROOT / "ocr_smart.ps1")
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
@@ -264,6 +291,7 @@ function wsl {{
         self.assertEqual(payload["status"], "triage_only")
         self.assertEqual(payload["route_reason"], "not_applicable_without_path")
 
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_ocr_smart_normal_mode_reports_missing_path_as_json(self) -> None:
         script_path = self._windows_script_path(ROOT / "ocr_smart.ps1")
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"

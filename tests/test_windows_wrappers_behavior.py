@@ -130,6 +130,7 @@ class FakeLocalOcr:
         self._thread.join(timeout=5)
 
 
+@unittest.skipUnless(os.name == "nt", "Run Windows HTTP wrapper tests natively so client and test server share loopback")
 class WindowsWrapperBehaviorTest(unittest.TestCase):
     def test_all_entrypoints_reject_remote_hosts_before_work(self):
         for script in ("ocr_once.ps1", "ocr_smart.ps1", "start_server.ps1", "stop_server.ps1"):

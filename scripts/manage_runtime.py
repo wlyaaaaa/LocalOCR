@@ -22,8 +22,8 @@ def freeze_source(source: Path, destination: Path) -> dict:
     """Copy only the release's known code/test inputs, never outputs, jobs or .git."""
     if destination.exists() or destination.is_symlink():
         raise RuntimeError("Release source already exists; create a new candidate instead of overwriting")
-    files = [source / "pyproject.toml", source / "README.md"] + list(source.glob("*.ps1")) + list(source.glob("*.bat")) + list((source / "docs").glob("*.md"))
-    for directory, patterns in [("localocr", ("*.py", "*.json")), ("scripts", ("*.py", "*.sh")),
+    files = [source / "pyproject.toml", source / "README.md", source / "LICENSE", source / "AGENTS.md"] + list(source.glob("*.ps1")) + list(source.glob("*.bat")) + list((source / "docs").glob("*.md"))
+    for directory, patterns in [("localocr", ("*.py", "*.json")), ("scripts", ("*.py", "*.sh", "*.ps1")),
                                 ("tests", ("*.py",)), ("requirements", ("*.txt",))]:
         for pattern in patterns:
             files.extend((source / directory).rglob(pattern))
@@ -61,8 +61,8 @@ def freeze_source(source: Path, destination: Path) -> dict:
 def state() -> dict:
     from localocr.model_registry import load_model_profiles
     from localocr.release_identity import execution_sha256
-    files = [ROOT / 'pyproject.toml', ROOT / 'README.md'] + list(ROOT.glob('*.ps1')) + list(ROOT.glob('*.bat')) + list((ROOT / 'docs').glob('*.md'))
-    for relative, patterns in [('localocr', ('*.py', '*.json')), ('scripts', ('*.py', '*.sh')), ('tests', ('*.py',)), ('requirements', ('*.txt',))]:
+    files = [ROOT / 'pyproject.toml', ROOT / 'README.md', ROOT / 'LICENSE', ROOT / 'AGENTS.md'] + list(ROOT.glob('*.ps1')) + list(ROOT.glob('*.bat')) + list((ROOT / 'docs').glob('*.md'))
+    for relative, patterns in [('localocr', ('*.py', '*.json')), ('scripts', ('*.py', '*.sh', '*.ps1')), ('tests', ('*.py',)), ('requirements', ('*.txt',))]:
         for pattern in patterns:
             files.extend((ROOT / relative).rglob(pattern))
     content = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(set(files)) if p.is_file() and '__pycache__' not in p.parts}

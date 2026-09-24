@@ -98,7 +98,6 @@ def _predict(
     emit({"stage": "loading_model", "gpu": cache.get("gpu")})
 
     from .pdf_utils import input_page_count, iter_input_pages, uniform_page_hint
-    from .router import is_pdf
 
     if "engine" not in cache:
         cache["engine"] = get_engine(profile, device=device)
@@ -185,7 +184,7 @@ def _worker_main(
                 return
             request_id = payload["request_id"]
 
-            def emit(event: dict) -> None:
+            def emit(event: dict, request_id=request_id) -> None:
                 connection.send({"type": "progress", "request_id": request_id, **event})
 
             try:

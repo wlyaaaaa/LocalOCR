@@ -6,7 +6,7 @@ NAME=${1:-paddle-3.4.0-$(date +%Y%m%d-%H%M%S)}
 [[ "$NAME" =~ ^[a-zA-Z0-9._-]+$ && "$NAME" != current && "$NAME" != previous ]] || { echo "Invalid candidate name" >&2; exit 2; }
 CANDIDATE=/root/localocr-runtimes/$NAME
 [[ ! -e "$CANDIDATE" && ! -L "$CANDIDATE" ]] || { echo "Candidate already exists; inspect instead of overwriting" >&2; exit 2; }
-export PIP_CACHE_DIR=${PIP_CACHE_DIR:-/mnt/e/Downloads/localocr-pip-cache}
+export PIP_CACHE_DIR=${PIP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pip}
 mkdir -p /root/localocr-runtimes "$PIP_CACHE_DIR"
 python3.12 -m venv "$CANDIDATE"
 "$CANDIDATE/bin/python" -m pip install --timeout 90 --retries 3 --index-url https://pypi.org/simple --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/ -r "$PROJECT/requirements/runtime-paddle-cu129.lock.txt"

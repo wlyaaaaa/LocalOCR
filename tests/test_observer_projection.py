@@ -273,7 +273,7 @@ class ObserverEndpointTest(unittest.TestCase):
             previous_service = server._service
             server._service = SimpleNamespace(job_registry=JobRegistry(job_dir))
             try:
-                client = TestClient(server.app)
+                client = TestClient(server.app, base_url="http://127.0.0.1:18665")
 
                 list_response = client.get("/observer/jobs")
                 detail_response = client.get(f"/observer/jobs/{JOB_ID}")

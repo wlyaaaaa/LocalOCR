@@ -8,13 +8,16 @@ import threading
 import psutil
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import __version__
 from .path_utils import to_wsl_path
 from .gpu_broker import (
     GpuBrokerConflict,
@@ -54,10 +57,40 @@ async def lifespan(_app):
 
 app = FastAPI(
     title="LocalOCR API",
-    version="0.7.0",
+    version=__version__,
     description="Local-only OCR API for PP-OCRv6_medium, PaddleOCR-VL-1.6, and PP-StructureV3.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def check_local_request(request: Request, call_next):
+    # Native clients do not send Origin. Browser callers must be same-origin;
+    # this also covers multipart uploads and bodyless cancellation requests.
+    origin = request.headers.get("origin")
+    if origin is not None:
+        try:
+            source = urlsplit(origin)
+            same_origin = (
+                source.scheme == request.url.scheme
+                and source.hostname == request.url.hostname
+                and (source.port or 80) == (request.url.port or 80)
+                and not source.username and not source.password
+                and not source.path and not source.query and not source.fragment
+            )
+        except ValueError:
+            same_origin = False
+        if not same_origin:
+            return JSONResponse({"detail": "Cross-origin requests are not allowed"}, status_code=403)
+    if request.method == "POST":
+        expected = {"/ocr/path": "application/json", "/ocr/file": "multipart/form-data"}.get(request.url.path.rstrip("/"))
+        content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if expected is not None and content_type != expected:
+            return JSONResponse({"detail": f"Content-Type must be {expected}"}, status_code=415)
+    return await call_next(request)
+
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"], www_redirect=False)
 
 _service: OCRService | None = None
 _service_lock = threading.Lock()
@@ -86,7 +119,7 @@ def health() -> dict:
         "service": "localocr",
         "readiness": "job_state_persistence_failed" if failure else "ready",
         "recovery_job": {key: failure.get(key) for key in ("job_id", "job_key")} if failure else None,
-        "api_version": "0.7.0",
+        "api_version": __version__,
         "server_pid": os.getpid(),
         "server_start_time": psutil.Process().create_time(),
         "gpu": service.gpu_summary,
@@ -207,7 +240,7 @@ def _error_response(exc: Exception) -> JSONResponse:
 
 @app.post("/ocr/file")
 async def ocr_file(
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File()],
     engine: Literal["auto", "ocr", "vl", "structure"] = "auto",
     model: str | None = None,
     write_outputs: bool = True,

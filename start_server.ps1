@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $PSScriptRoot 'scripts/windows_paths.ps1')
 $ServerDir = Join-Path $ScriptDir '_server'
 $LogPath = Join-Path $ServerDir 'localocr-api.log'
 [void][System.Net.IPAddress]::Parse($HostAddress)
@@ -125,9 +126,9 @@ public static class LocalOcrDetachedProcess {
 }
 '@
     }
-    $command = "cd /mnt/e/Projects/Tools/LocalOCR && exec scripts/run_in_wsl.sh -m localocr.server --host '$HostAddress' --port $Port >> '/mnt/e/Projects/Tools/LocalOCR/_server/localocr-api.log' 2>&1"
+    $runtimeScript = (ConvertTo-LocalOcrWslPath -Path $PSScriptRoot) + '/scripts/run_in_wsl.sh'
     $nativeWsl = Join-Path $env:WINDIR 'System32\wsl.exe'
-    $processId = [LocalOcrDetachedProcess]::Start($nativeWsl,@('-d','Ubuntu','-e','bash','-lc',$command),$ScriptDir,(Join-Path $ServerDir 'wsl-launcher.log'))
+    $processId = [LocalOcrDetachedProcess]::Start($nativeWsl,@('-d','Ubuntu','-e','bash',$runtimeScript,'-m','localocr.server','--host',$HostAddress,'--port',[string]$Port),$ScriptDir,$LogPath)
     return "LocalOCR WSL launcher started: $processId"
 }
 

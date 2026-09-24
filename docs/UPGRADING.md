@@ -15,7 +15,7 @@
 先在开发项目中更新 profile/adapter/相关测试。依赖升级在隔离环境中完成，确认版本集合后更新 `requirements/runtime-paddle-cu129.lock.txt`，不要对 current 运行 pip upgrade。
 
 ```bash
-cd /mnt/e/Projects/Tools/LocalOCR
+cd "<LocalOCR 的 WSL 根目录>"
 bash scripts/install_wsl.sh <unique-candidate-name>
 ```
 
@@ -38,7 +38,7 @@ bash scripts/run_in_wsl.sh scripts/manage_runtime.py validate --allow-heavy
 先在 Windows 使用现有身份校验停止入口，确认没有在途工作，不强制杀别的服务：
 
 ```powershell
-& 'E:\Projects\Tools\LocalOCR\stop_server.ps1'
+.\stop_server.ps1
 ```
 
 随后在 WSL 激活当前所选候选：

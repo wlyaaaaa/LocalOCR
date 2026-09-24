@@ -3,34 +3,33 @@
 # 拖入文件/文件夹/PDF，或：.\start.ps1 "C:\路径\文件或文件夹" [--engine auto|ocr|vl|structure] [--model profile-id]
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Args
+    [string[]]$InputArgs
 )
 
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $PSScriptRoot 'scripts/windows_paths.ps1')
 
-if (-not $Args -or $Args.Count -eq 0) {
+if (-not $InputArgs -or $InputArgs.Count -eq 0) {
     Write-Host "用法：把图片 / PDF / 文件夹拖到 start.bat 上，或：.\start.ps1 `"路径`" [--engine auto|ocr|vl|structure] [--model profile-id]"
     exit 1
 }
 
-# 把 Windows 路径转成 WSL 的 /mnt/e/... 形式，逐个传给 CLI。
+# 把 Windows 路径转成所选 WSL 发行版中的路径，逐个传给 CLI。
 $wslArgs = @()
-foreach ($a in $Args) {
+foreach ($a in $InputArgs) {
     if ($a -match '^--') {
         $wslArgs += $a
     } elseif (Test-Path -LiteralPath $a) {
-        $full = (Resolve-Path -LiteralPath $a).Path
-        $wslArgs += ($full -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() } -replace '\\', '/')
+        $wslArgs += ConvertTo-LocalOcrWslPath -Path $a
     } else {
         $wslArgs += $a
     }
 }
 
-$argStr = ($wslArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
-$cmd = "bash /mnt/e/Projects/Tools/LocalOCR/scripts/run_in_wsl.sh -m localocr.cli $argStr"
+$runInWsl = (ConvertTo-LocalOcrWslPath -Path $PSScriptRoot) + '/scripts/run_in_wsl.sh'
 Write-Host "[LocalOCR] 启动识别..." -ForegroundColor Cyan
-wsl -d Ubuntu -e bash -c $cmd
+& wsl.exe -d Ubuntu -e bash $runInWsl -m localocr.cli @wslArgs
 $code = $LASTEXITCODE
 if ($code -ne 0) {
     Write-Host ""

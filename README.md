@@ -1,7 +1,7 @@
 # LocalOCR
 
 本地高质量中文 OCR 系统，基于 **PaddleOCR 3.7.0** + **PaddlePaddle GPU 3.4.0 (CUDA 12.9)**，
-面向 **RTX 5090D（Blackwell sm_120）** + WSL2 Ubuntu 24.04。
+面向 **RTX 5080 / 5090D（Blackwell sm_120）** + WSL2 Ubuntu 24.04。
 
 ## 特性
 
@@ -39,6 +39,10 @@
 > 当前支持并实机验证的是 Linux cu129 wheel，包含 sm_120；不与 Windows 或 CPU wheel 混装。
 > 详见 [当前架构](docs/ARCHITECTURE.md)。
 
+Python 包声明的语言最低版本为 3.10；完整 GPU 环境按已验证的 Python 3.12 和锁定依赖安装。其它 Python 版本未作为 GPU 运行环境验收。
+
+以下命令在项目根目录执行；WSL 路径通过 `wslpath` 解析，不要求固定盘符或目录。
+
 ## AI / Codex 默认入口
 
 给 AI 助手调用时，默认先用 bounded smart wrapper，不要直接拉长时间阻塞 PowerShell：
@@ -64,11 +68,15 @@
 git diff --check
 
 # 不加载真实模型的路由和 Windows wrapper 回归
-wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_wsl.sh -m unittest tests.test_smart_router tests.test_windows_wrappers"
+$projectWsl = wsl.exe -d Ubuntu -e wslpath -a -u $PWD.Path
+wsl.exe -d Ubuntu --cd $projectWsl -e /root/localocr-runtimes/current/bin/python -B -m unittest discover -s tests -v
+
+# Windows HTTP wrapper 行为测试与本地假服务使用同一 Windows loopback
+python -m unittest tests.test_windows_wrappers tests.test_windows_wrappers_behavior -v
 
 # 改过 model_profiles.json 或 adapter 后，再重启 API 做一个小图 smoke
 .\stop_server.ps1
-.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
+.\ocr_smart.ps1 "tests/samples/probe_text.png" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
 ```
 
 常规验收不要加 `-StopAfter`；它会释放常驻服务并让下一次 OCR 冷启动，可能把短检查拖到 1-2 分钟。只有要切换到 Ollama、本地大模型、游戏或其他重 GPU 任务前，才用 `release_resources.ps1` / `-StopAfter`。
@@ -91,15 +99,16 @@ wsl -d Ubuntu -e bash -lc "cd /mnt/e/Projects/Tools/LocalOCR && scripts/run_in_w
 在 Windows 的 **PowerShell 7.3+（`pwsh`）** 里：
 
 ```powershell
-wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
+$projectWsl = wsl.exe -d Ubuntu -e wslpath -a -u $PWD.Path
+wsl.exe -d Ubuntu -e bash "$projectWsl/scripts/install_wsl.sh"
 ```
 
 脚本只创建独立候选环境，按 `requirements/runtime-paddle-cu129.lock.txt` 安装并固定该版本源码，不覆盖或自动激活当前环境。模型预下载仍需显式授权 `--allow-heavy`；随后验证依赖、单元测试和合成 GPU 质量。切换及回滚见 [升级指南](docs/UPGRADING.md)。
 
 ### 2. 使用
 
-**方式 A — 拖拽（最简单）**：把图片/PDF/文件夹拖到 `E:\Projects\Tools\LocalOCR\start.bat` 上，松手即跑。
-结果出现在 `E:\Projects\Tools\LocalOCR\outputs\` 下，每个输入文件产出兼容的 `.txt` / `.md` / `.json` 展示投影，另有按请求 hash 隔离的 `.txt` / `.md` / `.json` canonical 投影和 `.objective.json` 客观结果 sidecar。
+**方式 A — 拖拽（最简单）**：把图片/PDF/文件夹拖到 `start.bat` 上，松手即跑。
+结果出现在 `outputs/` 下，每个输入文件产出兼容的 `.txt` / `.md` / `.json` 展示投影，另有按请求 hash 隔离的 `.txt` / `.md` / `.json` canonical 投影和 `.objective.json` 客观结果 sidecar。
 
 **方式 B — 命令行**：
 
@@ -110,7 +119,7 @@ wsl -d Ubuntu -e bash /mnt/e/Projects/Tools/LocalOCR/scripts/install_wsl.sh
 等价于在 WSL 里：
 
 ```bash
-cd /mnt/e/Projects/Tools/LocalOCR
+cd "<LocalOCR 的 WSL 根目录>"
 scripts/run_in_wsl.sh -m localocr.cli "图片或文件夹或pdf" --engine auto --out-dir outputs
 ```
 
@@ -126,34 +135,34 @@ scripts/run_in_wsl.sh -m localocr.cli "图片或文件夹或pdf" --engine auto -
 
 ```powershell
 # Codex / AI 助手默认入口：所有引擎共享可取消、有期限的执行路径
-.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -Engine auto
+.\ocr_smart.ps1 "tests/samples/sample_scan.pdf" -Engine auto
 
 # 只做轻量预检，不提交 OCR 任务
-.\ocr_smart.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_scan.pdf" -TriageOnly
+.\ocr_smart.ps1 "tests/samples/sample_scan.pdf" -TriageOnly
 
 # 启动本机 API，只监听 127.0.0.1:18665
 .\start_server.ps1
 
 # 通过 API 调一次 OCR；如果服务未启动，会自动拉起
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr
+.\ocr_once.ps1 "tests/samples/sample_chat_screenshot.png" -Engine ocr
 
 # 指定具体模型 profile；适合未来新增/切换模型时做验收
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\probe_text.png" -Engine auto -Model ppocrv6-medium
+.\ocr_once.ps1 "tests/samples/probe_text.png" -Engine auto -Model ppocrv6-medium
 
 # 确实较长的任务：执行期限与客户端等待分别设置
 .\ocr_smart.ps1 "E:\path\scan.pdf" -Engine vl -ExecutionTimeoutSec 600 -OuterTimeoutSec 630 -TimeoutSec 660
 
 # 表格/版面块/公式/印章等需要结构化坐标和块类型时，用 PP-StructureV3
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_table.png" -Engine structure -TimeoutSec 3600
+.\ocr_once.ps1 "tests/samples/sample_table.png" -Engine structure -TimeoutSec 3600
 
 # 查询某个 job_key 的状态或缓存可用性
 Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>"
 
 # 首次冷启动服务较慢时，可单独放宽服务启动等待时间
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
+.\ocr_once.ps1 "tests/samples/sample_chat_screenshot.png" -Engine ocr -StartupTimeoutSec 900
 
 # 一次性 OCR 后立即释放 API/GPU 资源
-.\ocr_once.ps1 "E:\Projects\Tools\LocalOCR\tests\samples\sample_chat_screenshot.png" -Engine ocr -StopAfter
+.\ocr_once.ps1 "tests/samples/sample_chat_screenshot.png" -Engine ocr -StopAfter
 
 # 启动本地大模型、游戏或其他重 GPU 任务前，手动释放 LocalOCR
 .\release_resources.ps1
@@ -161,6 +170,8 @@ Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>"
 # 停止服务
 .\stop_server.ps1
 ```
+
+API 仅接受 `Host: 127.0.0.1` 或 `localhost`（可带端口）。浏览器请求必须同源；本地命令行客户端无需额外认证头。`/ocr/path` 必须发送 `Content-Type: application/json`，上传使用 `multipart/form-data`；无正文的精确任务取消仍可直接调用。文件上传不另设固定大小上限，保留大文档输入能力。
 
 HTTP 入口：
 
@@ -178,7 +189,7 @@ Smart Router；`results[].route` 会解释首轮选择、难度评估和最终�
 
 ```json
 {
-  "path": "E:\\Projects\\Tools\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
+  "path": "C:\\path\\to\\sample.png",
   "engine": "ocr",
   "model": "ppocrv6-medium",
   "recursive": false,
@@ -251,3 +262,8 @@ stop_server.ps1  Windows API 停止入口
 普通回归不加载模型。明确运行 `tests/run_tests.py --allow-heavy` 后，报告写入本地
 `tests/TEST_REPORT.md`，不再把旧报告或实施计划当作现行结果提交；历史保留在 Git。
 真实需求仍须回读实际结果与原件，不能用测试通过、模型加载成功或高平均分替代验收。
+
+## 许可证与自动测试
+
+本项目代码采用 [MIT 许可证](LICENSE)。模型及第三方依赖各自遵循其上游许可证。
+GitHub Actions 在普通 Linux 环境运行不加载模型的单元和 HTTP 测试；Windows 专用行为测试在 Windows 本机执行并显式区分结果。轻量测试依赖为 `fastapi uvicorn python-multipart psutil Pillow pypdfium2 httpx`，无需安装 Paddle 或下载模型。
