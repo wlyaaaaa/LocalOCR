@@ -7,12 +7,16 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from localocr.engines.ppocrv6 import PPOCRv6Engine
-from localocr.engines.structure import StructureV3Engine
-from localocr.engines.vl import VLEngine
+# These tests exercise conversion of known SDK output via FakePredictor. The
+# real SDK/model path is covered by tests/run_tests.py GPU acceptance.
+with patch.dict(sys.modules, {"paddleocr": SimpleNamespace(PaddleOCR=object, PPStructureV3=object, PaddleOCRVL=object)}):
+    from localocr.engines.ppocrv6 import PPOCRv6Engine
+    from localocr.engines.structure import StructureV3Engine
+    from localocr.engines.vl import VLEngine
 from localocr.pdf_utils import rendered_pdf_page_metadata, read_png_dimensions
 
 

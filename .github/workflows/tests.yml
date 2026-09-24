@@ -17,6 +17,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install model-independent test dependencies
-        run: python -m pip install fastapi uvicorn python-multipart psutil Pillow pypdfium2 httpx
+        run: python -m pip install fastapi uvicorn python-multipart psutil Pillow pypdfium2 httpx opencv-python-headless
       - name: Run unit and HTTP tests without models or GPU
         run: python -B -m unittest discover -s tests -v

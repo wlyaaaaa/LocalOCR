@@ -266,4 +266,4 @@ stop_server.ps1  Windows API 停止入口
 ## 许可证与自动测试
 
 本项目代码采用 [MIT 许可证](LICENSE)。模型及第三方依赖各自遵循其上游许可证。
-GitHub Actions 在普通 Linux 环境运行不加载模型的单元和 HTTP 测试；Windows 专用行为测试在 Windows 本机执行并显式区分结果。轻量测试依赖为 `fastapi uvicorn python-multipart psutil Pillow pypdfium2 httpx`，无需安装 Paddle 或下载模型。
+GitHub Actions 在普通 Linux 环境运行不加载模型的单元和 HTTP 测试；Windows 专用行为测试在 Windows 本机执行并显式区分结果。轻量测试依赖为 `fastapi uvicorn python-multipart psutil Pillow pypdfium2 httpx opencv-python-headless`，无需安装 Paddle 或下载模型。Adapter 单元测试使用已知 SDK 输出夹具，真实 SDK 和模型路径另由 GPU 合成验收覆盖。
