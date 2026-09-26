@@ -99,12 +99,12 @@ class ServiceProcessTests(unittest.TestCase):
         variant = _request_variant("ocr", None, device="gpu:0")
         self.assertIn("output=display-summary-v1", variant)
 
-    def test_readme_default_decision_uses_current_router_generation(self):
-        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+    def test_ai_guide_default_decision_uses_current_router_generation(self):
+        guide = (Path(__file__).resolve().parents[1] / "docs" / "QUICKSTART_FOR_AI.md").read_text(
             encoding="utf-8"
         )
-        default_entry = readme.split("## AI / Codex 默认入口", 1)[1].split(
-            "## 最小验收", 1
+        default_entry = guide.split("## 常驻 API（推荐）", 1)[1].split(
+            "## 路由规则（auto 模式）", 1
         )[0]
         generation = AUTO_ROUTING_POLICY_VERSION.split(":", 1)[0].removeprefix(
             "smart-router-"

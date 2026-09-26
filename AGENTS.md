@@ -1,6 +1,6 @@
 # LocalOCR 项目约定
 
-- 识别、路由与输出语义以 README 和 `docs/ARCHITECTURE.md` 为准。正常 AI 调用用 `ocr_smart.ps1`；只有结构化需求才选 `structure`，不按文件名猜模型。
+- 识别、路由与输出语义以 `docs/QUICKSTART_FOR_AI.md` 和 `docs/ARCHITECTURE.md` 为准。正常 AI 调用用 `ocr_smart.ps1`；只有结构化需求才选 `structure`，不按文件名猜模型。
 - 所有 GPU 工作经过 LocalGpuBroker，保留取消、期限、进程树清理及原始识别证据。空文本不等于“无文字”，局部结果不等于完整覆盖。
 - API 只监听本机，保持 CLI、JSON 请求、文件上传和精确任务取消兼容。跨 Windows/WSL 的用户参数以独立参数传递，不拼成 shell 代码；项目路径从入口目录解析。
 - 正式运行使用独立源码快照。源码、测试与当前运行版本分别核对；运行时升级/回滚遵循 `docs/UPGRADING.md`，不原地修改 current 或 previous。

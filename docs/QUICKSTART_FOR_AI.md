@@ -49,6 +49,8 @@ scripts/run_in_wsl.sh -m localocr.cli "路径" --engine auto --out-dir outputs -
 
 Codex / AI 助手默认先用 smart wrapper，避免 PowerShell 长时间卡住当前回合：
 
+当前自动入口使用 Smart Router v5；普通页面先走 OCR，只在逐页结果需要时升级。
+
 ```powershell
 .\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
 ```
