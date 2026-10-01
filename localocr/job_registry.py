@@ -636,11 +636,6 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _claim_started_at(claim: JobClaim) -> str | None:
-    value = _read_json(claim.manifest_path).get("started_at")
-    return value if isinstance(value, str) and value else None
-
-
 def _output_files_exist(output_files: dict[str, Any]) -> bool:
     for value in output_files.values():
         if not value or not Path(str(value)).exists():

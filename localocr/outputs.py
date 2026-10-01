@@ -196,16 +196,6 @@ def build_display_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _blocks_text(pages: list[dict]) -> list[str]:
-    lines: list[str] = []
-    for page in pages:
-        for b in page.get("blocks", []):
-            t = (b.get("text") or "").strip()
-            if t:
-                lines.append(t)
-    return lines
-
-
 def _to_txt(result: dict, file_path: Path) -> str:
     parts = [
         f"文件: {file_path.name}",
