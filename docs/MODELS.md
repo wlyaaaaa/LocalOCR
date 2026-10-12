@@ -24,8 +24,11 @@ VL 明确关闭 `use_queues`：本项目单文件、逐页调用，不需要上�
 关闭后主体文字及原图位置恢复；极小浅字仍可能误读，关键内容须回原图复核。
 弯曲纸张仍可通过明确的 profile 配置启用矫正，不把它当作所有图片的通用增强。
 VL 使用 `cuda_module_loading=LAZY`，只在其 worker 内、任何 Paddle import/probe 前设置；GPU 推理同时使用
-`attention_backend=math`，在完整消费上游预测生成器的作用域内关闭 Flash 与 memory-efficient 注意力后端。
-两项配置均纳入 profile/缓存身份，内部注意力选项不传给 PaddleOCRVL 构造器，CPU 路径不切换注意力后端。
+`attention_backend=math`，在同一 worker 的探针、模型构建和完整预测作用域内关闭 Flash 与 memory-efficient 注意力后端。
+这些配置均纳入 profile/缓存身份，内部注意力选项不传给 PaddleOCRVL 构造器，CPU 路径不切换注意力后端。
+`cuda_preload_libraries=true` 在同一 worker 的 Paddle 导入前预加载 CUDA JIT 依赖库；它不预加载实际推理内核，不禁用异步提交，且纳入执行身份。
+GPU math 路径首次获取模型前，以独立的极小 BF16 表执行一次 embedding 并同步，不读取或修改模型权重。
+这是针对延迟加载时并行内核首次使用的预热，不能据此认定驱动死锁；BF16 路径按本机 GPU 能力核验，其他硬件须另行验收。
 这是减少本机原生 CUDA 模块常驻内存的配置，不修改模型、路由或整机环境；参见
 [NVIDIA 模块加载说明](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html)。
 

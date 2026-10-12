@@ -8,7 +8,6 @@ import sys
 
 import psutil
 
-
 def host_memory_bytes(*, timeout: float = 8) -> tuple[int, int]:
     is_wsl = sys.platform.startswith("linux") and (
         os.environ.get("WSL_INTEROP") or "microsoft" in platform.release().lower()

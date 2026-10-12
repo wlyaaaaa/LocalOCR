@@ -5,10 +5,9 @@ import struct
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -27,55 +26,6 @@ class FakePredictor:
 
     def predict(self, _image_path: str):
         return [self.item]
-
-
-class VLAttentionTest(unittest.TestCase):
-    def test_internal_attention_option_does_not_reach_sdk_constructor(self):
-        engine = VLEngine(options={"attention_backend": "math"})
-        constructor = Mock()
-        with patch.dict(VLEngine._ensure.__globals__, {"PaddleOCRVL": constructor}):
-            engine._ensure()
-        self.assertNotIn("attention_backend", constructor.call_args.kwargs)
-
-    def test_math_context_covers_lazy_iteration_and_restores_after_failure(self):
-        state = {"active": False}
-
-        @contextmanager
-        def kernel(**kwargs):
-            self.assertEqual(kwargs, {"enable_math": True, "enable_flash": False, "enable_mem_efficient": False})
-            state["active"] = True
-            try:
-                yield
-            finally:
-                state["active"] = False
-
-        def predictions(_path):
-            self.assertTrue(state["active"])
-            yield {"parsing_res_list": [{"block_content": "first"}]}
-            self.assertTrue(state["active"])
-            if fail:
-                raise RuntimeError("prediction failed")
-            yield {"parsing_res_list": [{"block_content": "second"}]}
-            self.assertTrue(state["active"])
-
-        for device, fail in (("gpu:0", False), ("cuda:0", False), ("gpu:0", True)):
-            engine = VLEngine(device=device, options={"attention_backend": "math"})
-            engine._ensure = lambda: SimpleNamespace(predict=predictions)
-            with patch.dict(sys.modules, {"paddle.nn.functional": SimpleNamespace(sdp_kernel=kernel)}):
-                if fail:
-                    with self.assertRaisesRegex(RuntimeError, "prediction failed"):
-                        engine.predict_image("synthetic.png")
-                else:
-                    self.assertEqual(engine.predict_image("synthetic.png")["returned_page_count"], 2)
-            self.assertFalse(state["active"])
-
-    def test_cpu_and_unconfigured_gpu_do_not_import_attention_backend(self):
-        for device, options in (("cpu", {"attention_backend": "math"}), ("gpu:0", {})):
-            with self.subTest(device=device):
-                engine = VLEngine(device=device, options=options)
-                engine._ensure = lambda: FakePredictor({"parsing_res_list": [{"block_content": "text"}]})
-                with patch.dict(sys.modules, {"paddle.nn.functional": None}):
-                    engine.predict_image("synthetic.png")
 
 
 class StructureAdapterTest(unittest.TestCase):

@@ -88,6 +88,16 @@ def _predict(
             # Set before even the GPU probe imports Paddle. The profile and its
             # cache/sidecar hash own this workaround, not the machine environment.
             os.environ["CUDA_MODULE_LOADING"] = module_loading
+        if "cuda_preload_libraries" in profile.options:
+            os.environ["CUDA_FORCE_PRELOAD_LIBRARIES"] = "1" if profile.options["cuda_preload_libraries"] else "0"
+    if uses_gpu and profile.runtime_backend == "paddle" and profile.options.get("attention_backend") == "math":
+        from paddle.nn.functional import sdp_kernel
+        with sdp_kernel(enable_math=True, enable_flash=False, enable_mem_efficient=False):
+            return _predict_model(payload, cache, emit, profile, uses_gpu, device, get_engine)
+    return _predict_model(payload, cache, emit, profile, uses_gpu, device, get_engine)
+
+
+def _predict_model(payload, cache, emit, profile, uses_gpu, device, get_engine):
     if uses_gpu and payload.get("probe_gpu") and "gpu" not in cache:
         from .gpu_probe import format_probe, probe_gpu
 
@@ -102,6 +112,11 @@ def _predict(
     from .pdf_utils import input_page_count, iter_input_pages, uniform_page_hint
 
     if "engine" not in cache:
+        if uses_gpu and profile.runtime_backend == "paddle" and profile.options.get("attention_backend") == "math":
+            import paddle
+            paddle.set_device(device.replace("cuda:", "gpu:"))
+            paddle.nn.functional.embedding(paddle.to_tensor([0], dtype="int64"), paddle.zeros([1, 1024], dtype="bfloat16"))
+            paddle.device.cuda.synchronize()
         cache["engine"] = get_engine(profile, device=device)
     engine = cache["engine"]
     ensure = getattr(engine, "_ensure", None)
@@ -229,7 +244,6 @@ class InferenceRuntime:
         self._predictor = predictor
         self._host_memory_provider = host_memory_provider
         self.memory_limit_bytes = memory_limit_bytes
-        self.effective_memory_limit_bytes = memory_limit_bytes
         self._state_lock = threading.RLock()
         self._call_lock = threading.Lock()
         self._process = None
@@ -307,25 +321,27 @@ class InferenceRuntime:
                     )
                 check_lease()
 
-            check_execution()
-            try:
-                total, available = (self._host_memory_provider or host_memory_bytes)(
-                    timeout=deadline - time.monotonic()
-                )
-            except Exception as exc:
+            def check_host() -> None:
                 check_execution()
-                raise ExecutionError(
-                    "memory_status_unavailable", "Cannot read host physical memory.", http_status=503
-                ) from exc
+                try:
+                    total, available = (self._host_memory_provider or host_memory_bytes)(
+                        timeout=deadline - time.monotonic()
+                    )
+                except Exception as exc:
+                    check_execution()
+                    raise ExecutionError(
+                        "memory_status_unavailable", "Cannot read host physical memory.", http_status=503
+                    ) from exc
+                check_execution()
+                if available <= max(total // 10, 1024**3):
+                    raise ExecutionError(
+                        "memory_pressure", "Host memory has no capacity above its reserve.", http_status=503
+                    )
+
             check_execution()
-            headroom = available - max(total // 10, 1024**3)
-            if headroom <= 0:
-                raise ExecutionError(
-                    "memory_pressure", "Host memory has no capacity above its reserve.", http_status=503
-                )
-            self.effective_memory_limit_bytes = min(
-                self.memory_limit_bytes, self._memory_bytes() + headroom
-            )
+            if self.pid is not None and (self.profile_id, self.profile_revision) != (payload["profile_id"], payload.get("profile_revision")): self.close()
+            check_host()
+            host_checked = time.monotonic()
             self._start(payload["profile_id"], payload.get("profile_revision"))
             connection = self._connection
             process = self._process
@@ -342,12 +358,15 @@ class InferenceRuntime:
             heartbeat = time.monotonic()
             while True:
                 check_execution()
-                if self._memory_bytes() > self.effective_memory_limit_bytes:
+                if self._memory_bytes() > self.memory_limit_bytes:
                     raise ExecutionError(
                         "memory_limit_exceeded",
                         "The OCR task exceeded its memory limit.",
                         http_status=503,
                     )
+                if time.monotonic() - host_checked >= 3:
+                    check_host()
+                    host_checked = time.monotonic()
                 if time.monotonic() - heartbeat >= 5:
                     progress(
                         {

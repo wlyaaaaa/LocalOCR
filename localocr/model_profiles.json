@@ -62,6 +62,7 @@
         "pipeline_version": "v1.6",
         "vl_rec_backend": "native",
         "cuda_module_loading": "LAZY",
+        "cuda_preload_libraries": true,
         "attention_backend": "math",
         "use_queues": false,
         "use_doc_orientation_classify": true,

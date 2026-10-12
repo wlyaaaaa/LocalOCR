@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,6 +26,7 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertIn("layout_structure", registry.profiles["pp-structure-v3"].capabilities)
         self.assertEqual(registry.profiles["paddleocr-vl-1.6"].options["cuda_module_loading"], "LAZY")
         self.assertEqual(registry.profiles["paddleocr-vl-1.6"].options["attention_backend"], "math")
+        self.assertTrue(registry.profiles["paddleocr-vl-1.6"].options["cuda_preload_libraries"])
         self.assertFalse(registry.profiles["ppocrv6-medium"].options["use_doc_unwarping"])
 
     def test_engine_aliases_resolve_to_default_profile_ids(self) -> None:
@@ -77,7 +79,8 @@ class ModelRegistryTest(unittest.TestCase):
                    return_value=SimpleNamespace(VLEngine=lambda **kwargs: kwargs)):
             actual = get_engine("vl")
         self.assertNotIn("cuda_module_loading", actual["options"])
-        self.assertEqual(actual["options"]["attention_backend"], "math")
+        self.assertNotIn("cuda_preload_libraries", actual["options"])
+        self.assertNotIn("attention_backend", actual["options"])
         self.assertEqual(resolve_model_reference("vl").options["cuda_module_loading"], "LAZY")
 
     def test_cuda_loading_mode_is_applied_after_lease_before_paddle_probe(self):
@@ -87,6 +90,7 @@ class ModelRegistryTest(unittest.TestCase):
 
         def probe():
             self.assertEqual(os.environ.get("CUDA_MODULE_LOADING"), "LAZY")
+            self.assertEqual(os.environ.get("CUDA_FORCE_PRELOAD_LIBRARIES"), "1")
             events.append("probe")
             return {}
 
@@ -96,13 +100,26 @@ class ModelRegistryTest(unittest.TestCase):
             return SimpleNamespace(engine_name="Fake", model_name="Fake", predict_image=lambda _: {"pages": [{"blocks": []}]})
 
         fake_probe = SimpleNamespace(probe_gpu=probe, format_probe=lambda _: "fake GPU")
+        @contextmanager
+        def kernel(**kwargs):
+            self.assertEqual(kwargs, {"enable_math": True, "enable_flash": False, "enable_mem_efficient": False})
+            events.append("math")
+            try:
+                yield
+            finally:
+                events.append("restored")
+        fake_functional = SimpleNamespace(sdp_kernel=kernel, embedding=lambda *_: events.append("warmup"))
+        fake_paddle = SimpleNamespace(set_device=lambda device: events.append(device),
+            to_tensor=lambda *_, **__: None, zeros=lambda *_, **__: None,
+            nn=SimpleNamespace(functional=fake_functional),
+            device=SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: events.append("synchronized"))))
         with patch.dict(os.environ, {"CUDA_MODULE_LOADING": "EAGER"}), \
-             patch.dict(sys.modules, {"localocr.gpu_probe": fake_probe}), \
+             patch.dict(sys.modules, {"localocr.gpu_probe": fake_probe, "paddle": fake_paddle, "paddle.nn.functional": fake_functional}), \
              patch("localocr.gpu_broker.verify_inherited_gpu_lease", side_effect=lambda _: events.append("lease")), \
              patch("localocr.model_registry.get_engine", side_effect=engine):
             result = _predict({"device": "gpu:0", "profile_id": "paddleocr-vl-1.6",
                                "probe_gpu": True, "lease": {}, "path": str(Path(__file__).parent / "samples/probe_text.png"), "tmp_dir": os.environ.get("TEMP", "/tmp")}, {}, lambda _: None)
-        self.assertEqual(events, ["lease", "probe", "engine"])
+        self.assertEqual(events, ["lease", "math", "probe", "gpu:0", "warmup", "synchronized", "engine", "restored"])
         self.assertEqual(result["cuda_module_loading"], "LAZY")
 
     def test_explicit_cpu_never_probes_gpu_or_alters_cuda_environment(self):

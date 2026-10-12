@@ -161,6 +161,8 @@ def get_engine(model_ref: str | ModelProfile, device: str = "gpu:0"):
     options = dict(profile.options)
     # Worker-owned CUDA initialization is not a PaddleOCR constructor argument.
     options.pop("cuda_module_loading", None)
+    options.pop("cuda_preload_libraries", None)
+    options.pop("attention_backend", None)
     return engine_cls(
         device=device,
         profile_id=profile.id,

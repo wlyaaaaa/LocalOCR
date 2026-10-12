@@ -25,7 +25,7 @@ Windows wrapper / CLI
 - deadline、取消、租约丢失、worker 崩溃和服务关闭都会停止进程组。WSL worker 的
   parent-death 保护和同组小 guard 同时覆盖父进程硬退出及普通子孙进程。
 - RSS 上限为服务及其子进程合计 30 GB，不是整机限制，也不是 GPU VRAM 指标。
-  每次请求在模型启动前读取宿主可用物理内存（WSL 读取 Windows 宿主），保留总量 10% 且至少 1 GiB；本次 RSS 上限取固定上限与当前服务 RSS 加剩余预算的较小值，探测失败或无余量时以 HTTP 503 拒绝。
+  模型启动前及运行中每 3 秒读取真实宿主可用物理内存（WSL 读取 Windows 宿主），保留总量 10% 且至少 1 GiB；低于或等于保留量、探测失败均以 HTTP 503 结束本服务工作进程，固定 RSS 上限另行监督。查询前后检查取消与期限；查询期间监督循环短暂阻塞，查询超时不超过 8 秒或剩余期限。
   超限只结束自己的工作进程，保留其它程序。OOM 等 native 错误明确失败。
 - `/health` 返回 `active_jobs`、阶段、PID、期限、当前模型与服务内存峰值。
   `gpu_status=not_probed` 表示 API 就绪但尚未在合法租约内执行 GPU 探针，不冒充 GPU 已验证。
