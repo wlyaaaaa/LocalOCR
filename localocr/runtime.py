@@ -17,6 +17,8 @@ from typing import Any, Callable
 
 import psutil
 
+from .memory_budget import host_memory_bytes
+
 
 DEFAULT_TIMEOUT_SEC = 300.0
 MAX_TIMEOUT_SEC = 7200.0
@@ -220,11 +222,14 @@ class InferenceRuntime:
     """Single in-flight request; reuse the same model, replace it on model switch."""
 
     def __init__(
-        self, *, predictor=None, memory_limit_bytes: int = DEFAULT_MEMORY_LIMIT_BYTES
+        self, *, predictor=None, memory_limit_bytes: int = DEFAULT_MEMORY_LIMIT_BYTES,
+        host_memory_provider=None,
     ) -> None:
         self._context = multiprocessing.get_context("spawn")
         self._predictor = predictor
+        self._host_memory_provider = host_memory_provider
         self.memory_limit_bytes = memory_limit_bytes
+        self.effective_memory_limit_bytes = memory_limit_bytes
         self._state_lock = threading.RLock()
         self._call_lock = threading.Lock()
         self._process = None
@@ -291,7 +296,36 @@ class InferenceRuntime:
                 "localocr_busy", "Inference is already running.", http_status=409
             )
         try:
-            check_lease()
+            def check_execution() -> None:
+                if cancel.is_set():
+                    raise ExecutionError(
+                        "execution_cancelled", "The OCR task was cancelled.", http_status=409
+                    )
+                if time.monotonic() >= deadline:
+                    raise ExecutionError(
+                        "execution_timeout", "The OCR execution deadline was exceeded.", http_status=504
+                    )
+                check_lease()
+
+            check_execution()
+            try:
+                total, available = (self._host_memory_provider or host_memory_bytes)(
+                    timeout=deadline - time.monotonic()
+                )
+            except Exception as exc:
+                check_execution()
+                raise ExecutionError(
+                    "memory_status_unavailable", "Cannot read host physical memory.", http_status=503
+                ) from exc
+            check_execution()
+            headroom = available - max(total // 10, 1024**3)
+            if headroom <= 0:
+                raise ExecutionError(
+                    "memory_pressure", "Host memory has no capacity above its reserve.", http_status=503
+                )
+            self.effective_memory_limit_bytes = min(
+                self.memory_limit_bytes, self._memory_bytes() + headroom
+            )
             self._start(payload["profile_id"], payload.get("profile_revision"))
             connection = self._connection
             process = self._process
@@ -307,20 +341,8 @@ class InferenceRuntime:
             )
             heartbeat = time.monotonic()
             while True:
-                if cancel.is_set():
-                    raise ExecutionError(
-                        "execution_cancelled",
-                        "The OCR task was cancelled.",
-                        http_status=409,
-                    )
-                if time.monotonic() >= deadline:
-                    raise ExecutionError(
-                        "execution_timeout",
-                        "The OCR execution deadline was exceeded.",
-                        http_status=504,
-                    )
-                check_lease()
-                if self._memory_bytes() > self.memory_limit_bytes:
+                check_execution()
+                if self._memory_bytes() > self.effective_memory_limit_bytes:
                     raise ExecutionError(
                         "memory_limit_exceeded",
                         "The OCR task exceeded its memory limit.",

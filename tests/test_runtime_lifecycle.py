@@ -33,6 +33,10 @@ from localocr.service import OCRService  # noqa: E402
 MiB = 1024 * 1024
 
 
+def fake_host_memory(**_):
+    return 64 * 1024**3, 48 * 1024**3
+
+
 def _atomic_write(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -107,7 +111,7 @@ def service_predictor(payload: dict[str, Any], cache: dict[str, Any], emit: Call
 def _coordinator_for_hard_death(state_path: str, child_pid_path: str) -> None:
     """Stand in for an API process that is subsequently SIGKILLed by its parent."""
 
-    runtime = InferenceRuntime(predictor=lifecycle_predictor)
+    runtime = InferenceRuntime(predictor=lifecycle_predictor, host_memory_provider=fake_host_memory)
 
     def progress(event: dict[str, Any]) -> None:
         worker_pid = event.get("worker_pid")
@@ -208,6 +212,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
     def _runtime(self, *, memory_limit_bytes: int = 30_000_000_000) -> InferenceRuntime:
         runtime = InferenceRuntime(
             predictor=lifecycle_predictor,
+            host_memory_provider=fake_host_memory,
             memory_limit_bytes=memory_limit_bytes,
         )
         self.addCleanup(_quiet_close, runtime)
@@ -547,7 +552,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
                 leases.append(lease)
                 return lease
 
-            runtime = InferenceRuntime(predictor=service_predictor)
+            runtime = InferenceRuntime(predictor=service_predictor, host_memory_provider=fake_host_memory)
             service = OCRService(
                 device="cpu",
                 tmp_dir=root / "tmp",
@@ -600,7 +605,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
                 leases.append(lease)
                 return lease
 
-            runtime = InferenceRuntime(predictor=service_predictor)
+            runtime = InferenceRuntime(predictor=service_predictor, host_memory_provider=fake_host_memory)
             service = OCRService(
                 device="cpu",
                 tmp_dir=root / "tmp",

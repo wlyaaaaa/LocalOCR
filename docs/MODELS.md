@@ -23,8 +23,10 @@ VL 明确关闭 `use_queues`：本项目单文件、逐页调用，不需要上�
 普通 OCR 默认 `use_doc_unwarping=false`。真实平面 UI 截图在 UVDoc 开启时出现错读/裁切并触发不必要升级，
 关闭后主体文字及原图位置恢复；极小浅字仍可能误读，关键内容须回原图复核。
 弯曲纸张仍可通过明确的 profile 配置启用矫正，不把它当作所有图片的通用增强。
-VL 的 `cuda_module_loading=EAGER` 只在其 worker 内、任何 Paddle import/probe 前设置，并纳入 profile/缓存身份。
-这是本机原生 CUDA 路径的有界初始化选择，不修改整机环境或宣称所有输入都会更快；参见
+VL 使用 `cuda_module_loading=LAZY`，只在其 worker 内、任何 Paddle import/probe 前设置；GPU 推理同时使用
+`attention_backend=math`，在完整消费上游预测生成器的作用域内关闭 Flash 与 memory-efficient 注意力后端。
+两项配置均纳入 profile/缓存身份，内部注意力选项不传给 PaddleOCRVL 构造器，CPU 路径不切换注意力后端。
+这是减少本机原生 CUDA 模块常驻内存的配置，不修改模型、路由或整机环境；参见
 [NVIDIA 模块加载说明](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/lazy-loading.html)。
 
 ## 已下载模型（本地缓存：`/root/.paddlex/official_models/`）

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from typing import Any
 
 from .common import combine_predictions, optional_score
@@ -58,6 +59,7 @@ class VLEngine:
     def _ensure(self):
         if self._vl is None:
             params = dict(self.options)
+            params.pop("attention_backend", None)
             params["device"] = self.device
             self._vl = PaddleOCRVL(**params)
         return self._vl
@@ -67,7 +69,14 @@ class VLEngine:
         return self._model_name
 
     def predict_image(self, image_path: str) -> dict[str, Any]:
-        return combine_predictions(self._ensure().predict(image_path), self._convert_result, options=self.options)
+        attention_context = nullcontext()
+        if self.device.startswith(("gpu", "cuda")) and self.options.get("attention_backend") == "math":
+            from paddle.nn.functional import sdp_kernel
+
+            attention_context = sdp_kernel(enable_math=True, enable_flash=False, enable_mem_efficient=False)
+        # The SDK returns a lazy generator; keep its complete consumption in scope.
+        with attention_context:
+            return combine_predictions(self._ensure().predict(image_path), self._convert_result, options=self.options)
 
     def _convert_result(self, data: dict[str, Any]) -> dict[str, Any]:
         parsing = data.get("parsing_res_list") or []
