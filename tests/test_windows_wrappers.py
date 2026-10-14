@@ -53,6 +53,15 @@ class WindowsWrapperTest(unittest.TestCase):
         self._assert_start_converts_chinese_windows_path_before_cli(executable, relative=True)
 
     @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
+    def test_start_converts_new_path_options_without_rewriting_other_values(self) -> None:
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        for option_form in ("separate", "equals", "wsl", "missing_out", "missing_tmp"):
+            with self.subTest(option_form=option_form):
+                self._assert_start_converts_chinese_windows_path_before_cli(
+                    executable, relative=True, option_form=option_form
+                )
+
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_drag_drop_host_converts_chinese_windows_path_before_cli(self) -> None:
         batch = (ROOT / "start.bat").read_text(encoding="utf-8")
         launch = next(
@@ -97,11 +106,15 @@ class WindowsWrapperTest(unittest.TestCase):
             self.assertTrue(capture.is_file(), _decode_process_output(completed.stdout))
             self.assertEqual(json.loads(capture.read_text(encoding="utf-8")), [input_windows])
 
-    def _assert_start_converts_chinese_windows_path_before_cli(self, executable: str, *, relative: bool = False) -> None:
+    def _assert_start_converts_chinese_windows_path_before_cli(
+        self, executable: str, *, relative: bool = False, option_form: str | None = None
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Run the exact release wrapper bytes from a real Windows temporary path,
             # even when its immutable source snapshot lives on the WSL filesystem.
-            script_copy = Path(temp_dir) / "start.ps1"
+            script_directory = Path(temp_dir) / "入口" if option_form else Path(temp_dir)
+            script_directory.mkdir(exist_ok=True)
+            script_copy = script_directory / "start.ps1"
             script_copy.write_bytes((ROOT / "start.ps1").read_bytes())
             (script_copy.parent / "scripts").mkdir()
             shutil.copy2(ROOT / "scripts/windows_paths.ps1", script_copy.parent / "scripts/windows_paths.ps1")
@@ -115,12 +128,38 @@ class WindowsWrapperTest(unittest.TestCase):
             normalized_input = input_windows.replace("\\", "/")
             self.assertRegex(normalized_input, r"^[A-Za-z]:/")
             expected_wsl_path = f"/mnt/{normalized_input[0].lower()}{normalized_input[2:]}"
+            expected_root = self._windows_script_path(script_copy.parent).replace("\\", "/")
+            expected_root = f"/mnt/{expected_root[0].lower()}{expected_root[2:]}"
+            caller_root = self._windows_script_path(Path(temp_dir)).replace("\\", "/")
+            caller_root = f"/mnt/{caller_root[0].lower()}{caller_root[2:]}"
+            options: list[str] = []
+            expected_options: list[str] = []
+            if option_form:
+                for value in ("ocr", "profile-id", "cpu", "30", "--out-dir"):
+                    (Path(temp_dir) / value).mkdir()
+                for key, value in (("--out-dir", "新的目录/识别 结果"), ("--tmp-dir", "新的目录/临时 空间")):
+                    selected = "/tmp/" + value if option_form == "wsl" else value.replace("/", "\\")
+                    expected = selected if option_form == "wsl" else caller_root + "/" + value
+                    options += [f"{key}={selected}"] if option_form == "equals" else [key, selected]
+                    expected_options += [f"{key}={expected}"] if option_form == "equals" else [key, expected]
+                for key, value in (("--engine", "ocr"), ("--model", "profile-id"), ("--device", "cpu"), ("--timeout-sec", "30")):
+                    pair = [f"{key}={value}"] if option_form == "equals" else [key, value]
+                    options += pair
+                    expected_options += pair
+                options += ["--recursive", "--no-gpu-probe", "--", "--out-dir"]
+                expected_options += ["--recursive", "--no-gpu-probe", "--", caller_root + "/--out-dir"]
+                if option_form == "missing_out":
+                    options = ["--out-dir", "--recursive"]
+                elif option_form == "missing_tmp":
+                    options = ["--tmp-dir", "--"]
+                if option_form.startswith("missing_"):
+                    expected_options = options.copy()
 
             quoted_script = script_path.replace("'", "''")
-            selected_input = str(input_path.relative_to(script_copy.parent)) if relative else input_windows
-            quoted_input = selected_input.replace("'", "''")
+            selected_input = str(input_path.relative_to(Path(temp_dir))) if relative else input_windows
+            quoted_arguments = " ".join("'" + value.replace("'", "''") + "'" for value in [selected_input, *options])
             quoted_capture = capture_windows.replace("'", "''")
-            working_dir = self._windows_script_path(script_copy.parent).replace("'", "''")
+            working_dir = self._windows_script_path(Path(temp_dir)).replace("'", "''")
             command = f"""
 function wsl.exe {{
     if ($args[3] -eq 'wslpath') {{
@@ -137,7 +176,7 @@ function wsl.exe {{
     $global:LASTEXITCODE = 0
 }}
 Set-Location -LiteralPath '{working_dir}'
-& '{quoted_script}' '{quoted_input}'
+& '{quoted_script}' {quoted_arguments}
 """
             completed = subprocess.run(
                 [executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -151,10 +190,13 @@ Set-Location -LiteralPath '{working_dir}'
             self.assertEqual(completed.returncode, 0, stderr)
             self.assertTrue(capture_path.is_file(), _decode_process_output(completed.stdout))
             wsl_arguments = json.loads(capture_path.read_text(encoding="utf-8"))
-            self.assertEqual(wsl_arguments[-1], expected_wsl_path)
-            expected_root = self._windows_script_path(script_copy.parent).replace("\\", "/")
-            expected_root = f"/mnt/{expected_root[0].lower()}{expected_root[2:]}"
-            self.assertEqual(wsl_arguments[:8], ["-d", "Ubuntu", "-e", "bash", expected_root + "/scripts/run_in_wsl.sh", "-m", "localocr.cli", expected_wsl_path])
+            self.assertEqual(wsl_arguments, ["-d", "Ubuntu", "-e", "bash", expected_root + "/scripts/run_in_wsl.sh", "-m", "localocr.cli", expected_wsl_path, *expected_options])
+            if option_form:
+                expected_output = "/tmp/新的目录/识别 结果" if option_form == "wsl" else self._windows_script_path(Path(temp_dir) / "新的目录" / "识别 结果")
+                if option_form.startswith("missing_"):
+                    expected_output = self._windows_script_path(script_copy.parent) + "\\outputs"
+                self.assertIn(expected_output, _decode_process_output(completed.stdout))
+                self.assertFalse((Path(temp_dir) / "新的目录").exists())
             self.assertNotIn("-c", wsl_arguments)
             self.assertNotIn("-lc", wsl_arguments)
 

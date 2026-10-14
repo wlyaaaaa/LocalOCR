@@ -2,7 +2,8 @@
 function ConvertTo-LocalOcrWslPath {
     param([Parameter(Mandatory)][string]$Path)
 
-    $fullPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).ProviderPath
+    if ($Path.StartsWith('/')) { return $Path }
+    $fullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     $converted = & wsl.exe -d Ubuntu -e wslpath -a -u $fullPath
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($converted)) {
         throw "Cannot resolve the WSL path: $fullPath"

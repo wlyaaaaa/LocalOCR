@@ -8,6 +8,8 @@
 
 在 Windows 里把图片/PDF/文件夹拖到 `.\start.bat` 上即可。结果在 `.\outputs\`（每个文件产出 `.txt`/`.md`/`.json`）。
 
+Windows 启动器显式指定 `--out-dir` / `--tmp-dir` 时，相对路径按调用者的 PowerShell 当前目录解析；目标目录可以尚未创建。
+
 ## 环境已就绪
 
 - 运行环境：WSL2 Ubuntu 24.04，通过 `/root/localocr-runtimes/current` 选择已验收环境；旧 `/root/localocr-venv` 保留为兼容/回滚入口

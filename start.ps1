@@ -17,8 +17,33 @@ if (-not $InputArgs -or $InputArgs.Count -eq 0) {
 
 # 把 Windows 路径转成所选 WSL 发行版中的路径，逐个传给 CLI。
 $wslArgs = @()
+$pathOptions = @('--out-dir', '--tmp-dir')
+$valueOptions = @('--engine', '--model', '--device', '--timeout-sec')
+$pendingOption = $null
+$parseOptions = $true
+$outputDirectory = "$ScriptDir\outputs"
 foreach ($a in $InputArgs) {
-    if ($a -match '^--') {
+    $looksLikeOption = $parseOptions -and $a.StartsWith('-') -and
+        $a -ne '-' -and $a -notmatch '^-(?:\d+|\d*\.\d+)$'
+    if ($pendingOption -and $looksLikeOption) { $pendingOption = $null }
+    if ($pendingOption) {
+        if ($pendingOption -eq '--out-dir') { $outputDirectory = if ($a.StartsWith('/')) { $a } else { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($a) } }
+        $value = if ($pendingOption -in $pathOptions) { ConvertTo-LocalOcrWslPath -Path $a } else { $a }
+        $wslArgs += $value
+        $pendingOption = $null
+    } elseif ($parseOptions -and $a -eq '--') {
+        $wslArgs += $a
+        $parseOptions = $false
+    } elseif ($parseOptions -and $a -match '^(--[^=]+)=(.*)$') {
+        $option = $Matches[1]
+        $value = $Matches[2]
+        if ($option -eq '--out-dir') { $outputDirectory = if ($value.StartsWith('/')) { $value } else { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($value) } }
+        if ($option -in $pathOptions) { $value = ConvertTo-LocalOcrWslPath -Path $value }
+        $wslArgs += "$option=$value"
+    } elseif ($looksLikeOption) {
+        $wslArgs += $a
+        if ($a -in ($pathOptions + $valueOptions)) { $pendingOption = $a }
+    } elseif ($a.StartsWith('/')) {
         $wslArgs += $a
     } elseif (Test-Path -LiteralPath $a) {
         $wslArgs += ConvertTo-LocalOcrWslPath -Path $a
@@ -33,9 +58,9 @@ Write-Host "[LocalOCR] 启动识别..." -ForegroundColor Cyan
 $code = $LASTEXITCODE
 if ($code -ne 0) {
     Write-Host ""
-    Write-Host "[结束] 退出码 $code。输出目录: $ScriptDir\outputs" -ForegroundColor Yellow
+    Write-Host "[结束] 退出码 $code。输出目录: $outputDirectory" -ForegroundColor Yellow
 } else {
     Write-Host ""
-    Write-Host "[完成] 输出目录: $ScriptDir\outputs (每个文件产出 .txt/.md/.json 三份)" -ForegroundColor Green
+    Write-Host "[完成] 输出目录: $outputDirectory (每个文件产出 .txt/.md/.json 三份)" -ForegroundColor Green
 }
 exit $code
