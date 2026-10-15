@@ -142,40 +142,35 @@ function Invoke-BoundedProcess {
         }
     }
 
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $remainingMs = { [int][Math]::Max(0, $TimeoutSec * 1000 - $watch.ElapsedMilliseconds) }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
     try {
-        $completed = $process.WaitForExit($TimeoutSec * 1000)
+        $completed = $process.WaitForExit((& $remainingMs)) -and
+            $stdoutTask.Wait((& $remainingMs)) -and $stderrTask.Wait((& $remainingMs))
         if (-not $completed) {
-            try {
-                $process.Kill()
-            } catch {
-                try {
-                    $process.Kill()
-                } catch {
-                }
+            if (-not $process.HasExited) {
+                try { $process.Kill() } catch { }
             }
             [void]$process.WaitForExit(5000)
             return [pscustomobject]@{
                 timed_out = $true
                 start_failed = $false
                 exit_code = $null
-                stdout = if ($stdoutTask.Wait(1000)) { $stdoutTask.GetAwaiter().GetResult() } else { "" }
-                stderr = if ($stderrTask.Wait(1000)) { $stderrTask.GetAwaiter().GetResult() } else { "Output pipe remained open after the client deadline." }
+                stdout = if ($stdoutTask.IsCompletedSuccessfully) { $stdoutTask.GetAwaiter().GetResult() } else { "" }
+                stderr = if ($stderrTask.IsCompletedSuccessfully) { $stderrTask.GetAwaiter().GetResult() } else { "Output pipe remained open after the client deadline." }
             }
         }
 
-        # Finalize redirected streams before reading ExitCode; otherwise a
-        # completed child can be misreported with a stale/null state.
-        [void]$process.WaitForExit(5000)
         $process.Refresh()
         $exitCode = [int]$process.ExitCode
         return [pscustomobject]@{
             timed_out = $false
             start_failed = $false
             exit_code = $exitCode
-            stdout = if ($stdoutTask.Wait(1000)) { $stdoutTask.GetAwaiter().GetResult() } else { "" }
-            stderr = if ($stderrTask.Wait(1000)) { $stderrTask.GetAwaiter().GetResult() } else { "Output pipe remained open after the client exited." }
+            stdout = $stdoutTask.GetAwaiter().GetResult()
+            stderr = $stderrTask.GetAwaiter().GetResult()
         }
     } finally {
         $process.Dispose()

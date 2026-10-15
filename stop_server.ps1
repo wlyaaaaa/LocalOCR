@@ -118,16 +118,19 @@ function Invoke-WslCommand {
     }
 
     $process = [System.Diagnostics.Process]::Start($psi)
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $remainingMs = { [int][Math]::Max(0, $TimeoutSec * 1000 - $watch.ElapsedMilliseconds) }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
     try {
-        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
-            try {
-                $process.Kill($true)
-            } catch {
+        $completed = $process.WaitForExit((& $remainingMs)) -and
+            $stdoutTask.Wait((& $remainingMs)) -and $stderrTask.Wait((& $remainingMs))
+        if (-not $completed) {
+            if (-not $process.HasExited) {
                 try {
-                    $process.Kill()
+                    $process.Kill($true)
                 } catch {
+                    try { $process.Kill() } catch { }
                 }
             }
             # A WSL child can outlive the host process and retain inherited
@@ -137,7 +140,6 @@ function Invoke-WslCommand {
             try { $process.StandardError.Close() } catch { }
             throw "wsl.exe timed out after ${TimeoutSec}s: $($Arguments -join ' ')"
         }
-        $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) {

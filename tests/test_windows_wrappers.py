@@ -363,10 +363,97 @@ Set-Location -LiteralPath '{working_dir}'
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
 
         self.assertIn("ReadToEndAsync", script)
-        self.assertIn("WaitForExit(5000)", script)
-        self.assertIn("Wait(1000)", script)
         self.assertIn("$process.Refresh()", script)
         self.assertIn("$ProgressPreference = 'SilentlyContinue'", script)
+
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
+    def test_process_deadline_includes_inherited_output_pipes(self) -> None:
+        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        for filename, function in (("ocr_smart.ps1", "Invoke-BoundedProcess"),
+                                   ("stop_server.ps1", "Invoke-WslCommand")):
+            with self.subTest(function=function), tempfile.TemporaryDirectory() as temp_dir:
+                folder = Path(temp_dir)
+                child = folder / "child.ps1"
+                parent = folder / "parent.ps1"
+                state = folder / "state.json"
+                child.write_text(
+                    "param([string]$StatePath)\nStart-Sleep -Seconds 4\n"
+                    "[IO.File]::WriteAllText($StatePath + '.done', 'natural exit')\n",
+                    encoding="utf-8-sig",
+                )
+                parent.write_text("""
+param([string]$ChildPath, [string]$StatePath)
+$psi = [Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = (Get-Process -Id $PID).Path
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+foreach ($a in @('-NoProfile', '-File', $ChildPath, $StatePath)) { [void]$psi.ArgumentList.Add($a) }
+$child = [Diagnostics.Process]::Start($psi)
+[IO.File]::WriteAllText($StatePath, (@{parent=$PID; child=$child.Id} | ConvertTo-Json -Compress))
+[Console]::Out.WriteLine('parent-out')
+[Console]::Error.WriteLine('parent-err')
+exit 0
+""", encoding="utf-8-sig")
+                paths = [ROOT / filename, parent, child, state]
+                quoted = ["'" + self._windows_script_path(p).replace("'", "''") + "'" for p in paths]
+                command = f"""
+$ErrorActionPreference = 'Stop'
+$sourcePath, $parentPath, $childPath, $statePath = {', '.join(quoted)}
+$functionName = '{function}'
+$ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
+$definition = $ast.Find({{param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+}}, $true).Extent.Text
+# Only substitute the executable; never execute the wrapper's top-level code or WSL.
+$definition = $definition.Replace('$psi.FileName = "wsl.exe"', '$psi.FileName = (Get-Process -Id $PID).Path')
+Invoke-Expression $definition
+$ordinary = foreach ($exitCode in @(0, 7)) {{
+    $argsForExit = @('-NoProfile', '-Command', "[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit $exitCode")
+    if ($functionName -eq 'Invoke-BoundedProcess') {{
+        $r = Invoke-BoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $argsForExit -TimeoutSec 5
+        @{{timed_out=$r.timed_out; start_failed=$r.start_failed; exit_code=$r.exit_code; stdout=$r.stdout; stderr=$r.stderr}}
+    }} else {{
+        try {{ @{{stdout=(Invoke-WslCommand -Arguments $argsForExit -TimeoutSec 5)}} }}
+        catch {{ @{{error=$_.Exception.Message}} }}
+    }}
+}}
+$arguments = @('-NoProfile', '-File', $parentPath, $childPath, $statePath)
+$watch = [Diagnostics.Stopwatch]::StartNew()
+$timedOut = $false
+$result = $null
+try {{
+    if ($functionName -eq 'Invoke-BoundedProcess') {{
+        $result = Invoke-BoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments -TimeoutSec 1
+        $timedOut = $result.timed_out
+    }} else {{ $result = Invoke-WslCommand -Arguments $arguments -TimeoutSec 1 }}
+}} catch {{ $result = $_.Exception.Message; $timedOut = $result.StartsWith('wsl.exe timed out after 1s:') }}
+$watch.Stop()
+$ids = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+$parentExited = $null -eq (Get-Process -Id $ids.parent -ErrorAction SilentlyContinue)
+$childProcess = Get-Process -Id $ids.child -ErrorAction SilentlyContinue
+$childAliveAtReturn = $null -ne $childProcess -and -not $childProcess.HasExited
+$childExited = $null -eq $childProcess -or $childProcess.WaitForExit(8000)
+@{{elapsed=$watch.Elapsed.TotalSeconds; timed_out=$timedOut; parent_exited=$parentExited;
+   child_alive_at_return=$childAliveAtReturn; child_exited=$childExited;
+   child_natural_exit=(Test-Path -LiteralPath ($statePath + '.done')); result=$result; ordinary=@($ordinary)}} | ConvertTo-Json -Depth 4 -Compress
+"""
+                completed = subprocess.run(
+                    [executable, "-NoProfile", "-Command", command],
+                    capture_output=True, text=False, timeout=15,
+                )
+                self.assertEqual(completed.returncode, 0, _decode_process_output(completed.stderr))
+                payload = json.loads(_decode_process_output(completed.stdout))
+                print(function + ": " + json.dumps(payload), flush=True)
+                expected = ([dict(timed_out=False, start_failed=False, exit_code=code, stdout="out", stderr="err")
+                             for code in (0, 7)] if function == "Invoke-BoundedProcess"
+                            else [dict(stdout="out"), dict(error="wsl.exe failed: err")])
+                self.assertEqual(payload["ordinary"], expected)
+                self.assertTrue(payload["parent_exited"], payload)
+                self.assertTrue(payload["child_exited"], payload)
+                self.assertTrue(payload["child_natural_exit"], payload)
+                self.assertTrue(payload["timed_out"], payload)
+                self.assertLess(payload["elapsed"], 2.5, payload)
+                self.assertTrue(payload["child_alive_at_return"], payload)
 
     def test_ocr_smart_uses_smart_router_v2_preview(self) -> None:
         script = (ROOT / "ocr_smart.ps1").read_text(encoding="utf-8")
@@ -391,7 +478,6 @@ Set-Location -LiteralPath '{working_dir}'
         self.assertIn("[int]$OuterTimeoutSec = 330", script)
         self.assertIn("[int]$ExecutionTimeoutSec = 300", script)
         self.assertIn("-ExecutionTimeoutSec $ExecutionTimeoutSec", script)
-        self.assertIn("WaitForExit($TimeoutSec * 1000)", script)
         self.assertIn("-TimeoutSec $OuterTimeoutSec", script)
         self.assertIn("client_timeout", script)
         self.assertIn("do_not_blindly_retry", script)
