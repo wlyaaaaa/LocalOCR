@@ -354,7 +354,7 @@ Set-Location -LiteralPath '{working_dir}'
 
         stdout = _decode_process_output(completed.stdout)
         stderr = _decode_process_output(completed.stderr)
-        self.assertEqual(completed.returncode, 0, stderr)
+        self.assertEqual(completed.returncode, 2, stderr)
         payload = json.loads(stdout)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "missing_path")
