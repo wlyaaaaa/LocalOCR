@@ -358,15 +358,25 @@ class OCRService:
                 profiles[fallback.id] = fallback
             identities = {key: execution_sha256(value) for key, value in profiles.items()}
 
-            request = self.job_registry.build_request(
-                source,
-                profile,
-                output_dir,
-                request_variant=_request_variant(
-                    engine_choice, model_choice, caller_binding, device=self.device,
-                    fallback_identity=identities.get(registry.defaults["vl"]),
-                ),
-            )
+            try:
+                request = self.job_registry.build_request(
+                    source,
+                    profile,
+                    output_dir,
+                    request_variant=_request_variant(
+                        engine_choice, model_choice, caller_binding, device=self.device,
+                        fallback_identity=identities.get(registry.defaults["vl"]),
+                    ),
+                )
+            except (OSError, ValueError) as exc:
+                exc.localocr_context = {
+                    "results": results,
+                    "completed_count": len(results),
+                    "failed_input": str(source),
+                    "unprocessed_inputs": [str(p) for p in files[len(results)+1:]],
+                    "skipped_inputs": skipped_inputs,
+                }
+                raise
             if write_files:
                 cached = self.job_registry.cached_response(request)
                 if cached is not None:
@@ -598,6 +608,12 @@ class OCRService:
                         exc.localocr_context = {
                             "job_id": request.job_id,
                             "job_key": request.job_key,
+                            "partial_output_files": partial_outputs,
+                            "results": results,
+                            "completed_count": len(results),
+                            "failed_input": str(source),
+                            "unprocessed_inputs": [str(p) for p in files[len(results)+1:]],
+                            "skipped_inputs": skipped_inputs,
                         }
                     raise
             finally:

@@ -298,6 +298,63 @@ class ServiceProcessTests(unittest.TestCase):
             self.assertFalse((root / "jobs").exists())
             self.assertEqual(list((root / "tmp").iterdir()), [])
 
+    def test_disappearing_batch_input_preserves_completed_results_and_pending_inputs(self):
+        from contextlib import contextmanager
+        from localocr.server import _error_response
+
+        for stage in ("identity", "snapshot"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = [self.source(root / "inputs", name)
+                         for name in ("01.png", "02.png", "03.png")]
+                service = FakeService(root)
+                self.addCleanup(service.close)
+                predict, lease_factory = service.process_file, service._gpu_lease_factory
+
+                def process(*args):
+                    result = predict(*args)
+                    if stage == "identity" and len(service.calls) == 1:
+                        files[1].unlink()
+                    return result
+
+                @contextmanager
+                def lease(owner):
+                    with lease_factory(owner) as acquired:
+                        if stage == "snapshot" and len(service.calls) == 1:
+                            files[1].unlink()
+                        yield acquired
+
+                service.process_file, service._gpu_lease_factory = process, lease
+                with self.assertRaises(FileNotFoundError) as raised:
+                    service.process_inputs(files, engine_choice="ocr", out_dir=root / "out")
+                response = _error_response(raised.exception)
+                body = json.loads(response.body)
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(body["error_code"], "input_not_found")
+                self.assertEqual(body["completed_count"], 1)
+                self.assertEqual(len(body["results"]), 1)
+                completed = body["results"][0]
+                self.assertTrue(all(Path(path).is_file() and Path(path).stat().st_size > 0
+                                    for path in completed["output_files"].values()))
+                self.assertEqual(body["failed_input"], str(files[1]))
+                self.assertEqual(body["unprocessed_inputs"], [str(files[2])])
+                self.assertEqual(body["skipped_inputs"], [])
+                self.assertEqual(len(service.calls), 1)
+                self.assertFalse(files[1].exists())
+                self.assertTrue(files[2].is_file())
+                self.assertEqual(list((root / "jobs").glob("*.lock")), [])
+                self.assertEqual(service.active_jobs, [])
+                if stage == "identity":
+                    self.assertNotIn("job_id", body)
+                    self.assertNotIn("job_key", body)
+                    self.assertEqual(len(list((root / "jobs").glob("*.json"))), 1)
+                else:
+                    state = service.job_registry.read_status(body["job_key"])
+                    self.assertEqual(state["status"], "failed")
+                    self.assertFalse(state["cache_available"])
+                    self.assertEqual(state["job_id"], body["job_id"])
+                    self.assertIsNone(body["partial_output_files"])
+
     def test_changed_source_is_not_published(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
