@@ -383,6 +383,25 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         self.assertEqual(payload["smart"]["client_exit_code"], 75)
         self.assertEqual(fake.post_bodies[0]["timeout_sec"], 19)
 
+    def test_smart_missing_path_fails_but_triage_only_succeeds(self) -> None:
+        fake = FakeLocalOcr()
+        with fake:
+            completed = self._run_wrapper("ocr_smart.ps1", "-Port", str(fake.port))
+            payload = self._payload(completed)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["status"], "missing_path")
+            self.assertEqual(fake.health_calls, 0)
+            self.assertEqual(fake.post_count, 0)
+
+            completed = self._run_wrapper("ocr_smart.ps1", "-TriageOnly", "-Port", str(fake.port))
+            payload = self._payload(completed)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["status"], "triage_only")
+            self.assertGreater(fake.health_calls, 0)
+            self.assertEqual(fake.post_count, 0)
+
     def test_smart_preserves_quoted_path_and_model_arguments(self) -> None:
         fake = FakeLocalOcr()
         with fake:

@@ -356,7 +356,7 @@ if (-not $Path -and -not $TriageOnly) {
         status = "missing_path"
         recommendation = "supply_path_or_use_triage_only"
     })
-    exit 0
+    exit 2
 }
 
 if ($Path) {
