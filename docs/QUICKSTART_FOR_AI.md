@@ -9,10 +9,11 @@
 在 Windows 里把图片/PDF/文件夹拖到 `.\start.bat` 上即可。结果在 `.\outputs\`（每个文件产出 `.txt`/`.md`/`.json`）。
 
 Windows 启动器显式指定 `--out-dir` / `--tmp-dir` 时，相对路径按调用者的 PowerShell 当前目录解析；目标目录可以尚未创建。
+`ocr_smart.ps1` / `ocr_once.ps1` 的输入和 `-OutDir` 同样按调用者当前目录解析；直接调用 `/ocr/path` 时，`path` 和显式的 `out_dir` 必须使用 Windows 盘符或 WSL 绝对路径，不支持 UNC 路径。
 
 ## 环境已就绪
 
-- 运行环境：WSL2 Ubuntu 24.04，通过 `/root/localocr-runtimes/current` 选择已验收环境；旧 `/root/localocr-venv` 保留为兼容/回滚入口
+- 运行环境：WSL2 Ubuntu 24.04，通过 `/root/localocr-runtimes/current` 选择已验收环境，`/root/localocr-runtimes/previous` 保留上一已验收版本用于回滚
 - 目标发布为 PaddlePaddle GPU 3.4.0 (cu129) + PaddleOCR 3.7.0，实际激活状态以 release inspect 和 PCConfig 为准
 - 模型已下载到 `/root/.paddlex/official_models/`（PP-OCRv6_medium + PaddleOCR-VL-1.6 + PP-StructureV3 组件），可离线
 - 模型选择已通过 `localocr/model_profiles.json` 解耦；`ocr` / `vl` / `structure` 是默认 profile 别名，可用 `--model` / `-Model` 指定具体 profile
@@ -58,6 +59,7 @@ Codex / AI 助手默认先用 smart wrapper，避免 PowerShell 长时间卡住�
 ```
 
 `ocr_smart.ps1` 只以 `/health.active_jobs` 判断 API 是否忙；字段缺失或无法读取是 `readiness_unknown`，不是空闲。
+`ocr_smart.ps1` 和 `ocr_once.ps1` 默认返回每个文件的精简摘要、覆盖/质量状态、路由及输出路径；逐页文字和坐标从 `results[].output_files.json` 或 objective 文件读取。需要完整 JSON 时加 `-Full`。
 CLI 与 API 共用 `auto` 分流：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
 先走 `ocr`；逐页判断空文本、低置信及表格/公式内容信号，仅升级问题页到本地 `vl`，不按文件名猜版式。
 复杂版面、表格、公式、多栏材料也可以显式传 `-Engine vl`。
@@ -78,6 +80,8 @@ CLI 与 API 共用 `auto` 分流：简单扫描 PDF、法律表单、送达地�
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18665/health
 ```
+
+要查看最近的任务，由 AI 直接读取 `_server/jobs/*.json`；不再提供观察者接口。
 
 查询某个任务：
 

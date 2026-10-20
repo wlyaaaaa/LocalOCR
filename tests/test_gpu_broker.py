@@ -163,7 +163,7 @@ class OCRServiceLeaseTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "sample.png"
-            source.write_bytes(b"not-an-image")
+            source.write_bytes((Path(__file__).parent / "samples" / "probe_text.png").read_bytes())
             service = OCRService(
                 probe_on_start=False,
                 tmp_dir=Path(tmp) / "pages",

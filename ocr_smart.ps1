@@ -18,12 +18,14 @@ param(
     [int]$OuterTimeoutSec = 330,
     [switch]$StopAfter,
     [switch]$Force,
-    [switch]$TriageOnly
+    [switch]$TriageOnly,
+    [switch]$Full
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ScriptDir 'scripts/wrapper_summary.ps1')
 
 function ConvertTo-CompactJson {
     param([Parameter(Mandatory = $true)]$Value)
@@ -429,6 +431,8 @@ if (($activity.state -eq "unknown") -and (-not $Force)) {
 }
 
 $ocrOnce = Join-Path $ScriptDir "ocr_once.ps1"
+if (-not $Path.StartsWith('/')) { $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path) }
+if ($OutDir -and -not $OutDir.StartsWith('/')) { $OutDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir) }
 $childInvocation = "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $Engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -ExecutionTimeoutSec $ExecutionTimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
 if ($Model) {
     $childInvocation += " -Model $(Quote-PowerShellString $Model)"
@@ -442,6 +446,7 @@ if ($OutDir) {
 if ($StopAfter) {
     $childInvocation += " -StopAfter"
 }
+if ($Full) { $childInvocation += " -Full" }
 
 $commandParts = @(
     "`$ErrorActionPreference = 'Stop'",
@@ -486,6 +491,7 @@ if ($client.timed_out) {
 $childPayload = Read-ChildJsonPayload $client.stdout
 if ($null -ne $childPayload) {
     $childPayload = Add-SmartMetadata -Payload $childPayload -Route $route -Activity $activity -ClientExitCode $(if ($null -eq $client.exit_code) { 1 } else { $client.exit_code })
+    if (-not $Full) { $childPayload = ConvertTo-LocalOcrSummary $childPayload }
     $childPayload | ConvertTo-Json -Depth 100
     if ($null -eq $client.exit_code) {
         exit 1

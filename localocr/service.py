@@ -24,6 +24,7 @@ from .model_registry import (
     select_model_profile_with_route,
 )
 from .objective_result import (
+    _image_readable,
     annotate_result,
     caller_binding_sha256,
     file_sha256,
@@ -451,6 +452,16 @@ class OCRService:
                                     http_status=409,
                                 )
                             self._checkpoint()
+                            if snapshot.stat().st_size == 0 or (
+                                snapshot.suffix.lower() != ".pdf" and not _image_readable(snapshot)
+                            ):
+                                error = ExecutionError(
+                                    "input_unreadable",
+                                    "The input is empty, damaged, or not fully written.",
+                                    http_status=400,
+                                )
+                                error.context["source_path"] = str(source)
+                                raise error
                             result = self.process_file(
                                 snapshot, profile.engine, profile.id
                             )

@@ -66,6 +66,39 @@ def close_claim_fd(claim) -> None:
 
 
 class JobRegistryTest(unittest.TestCase):
+    def test_startup_removes_only_completed_caches_with_confirmed_missing_outputs(self):
+        from localocr.job_registry import JobRegistry, _outputs_confirmed_missing
+        from localocr.path_utils import to_wsl_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs = root / "jobs"
+            jobs.mkdir()
+            artifact = root / "artifact.txt"
+            artifact.write_text("retained")
+            cases = {
+                "missing": ("completed", {"txt": str(root / "missing.txt")}),
+                "valid": ("completed", {"txt": "artifact.txt"}),
+                "translated": ("completed", {"txt": to_wsl_path(artifact).as_posix()}),
+                "empty": ("completed", {}), "malformed": ("completed", {"txt": None}),
+                "unc": ("completed", {"txt": r"\\server\share\missing.txt"}),
+                "drive-relative": ("completed", {"txt": "E:missing.txt"}),
+                "failed": ("failed", {"txt": str(root / "missing.txt")}),
+                "locked": ("completed", {"txt": str(root / "missing.txt")}),
+            }
+            for name, (status, outputs) in cases.items():
+                (jobs / f"{name}.json").write_text(json.dumps({"status": status, "output_files": outputs}))
+            (jobs / "locked.lock").write_text(json.dumps({"owner_pid": os.getpid(), "owner_start_time": psutil.Process().create_time()}))
+            before = Path.cwd()
+            try:
+                os.chdir(root)
+                JobRegistry(jobs).recover_abandoned()
+            finally:
+                os.chdir(before)
+            self.assertEqual({p.stem for p in jobs.glob("*.json")}, set(cases) - {"missing"})
+            with patch.object(Path, "stat", side_effect=PermissionError("unreadable")):
+                self.assertFalse(_outputs_confirmed_missing({"txt": str(artifact)}))
+
     def test_legacy_plain_pid_lock_uses_narrow_reuse_proof(self):
         from localocr.job_registry import JobRegistry
 

@@ -9,13 +9,14 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import psutil
 
 from .model_registry import ModelProfile, resolve_model_reference
 from .release_identity import execution_sha256
+from .path_utils import to_windows_hint, to_wsl_path
 from .objective_result import (
     config_sha256,
     file_sha256,
@@ -266,7 +267,7 @@ class JobRegistry:
             self._write_manifest(claim.manifest_path, manifest)
 
     def recover_abandoned(self) -> None:
-        """Startup recovery only: a dead owner cannot hold a 24-hour phantom job."""
+        """Recover dead owners and retire completed caches with missing artifacts."""
         if not self.job_dir.exists():
             return
         with self._registry_guard():
@@ -285,6 +286,17 @@ class JobRegistry:
                     )
                     self._write_manifest(manifest_path, manifest)
                 lock.unlink(missing_ok=True)
+            for path in self.job_dir.glob("*.json"):
+                try:
+                    if path.with_suffix(".lock").exists():
+                        continue
+                    manifest = _read_json(path)
+                    if manifest.get("status") == "completed" and _outputs_confirmed_missing(
+                        manifest.get("output_files")
+                    ):
+                        path.unlink(missing_ok=True)
+                except (OSError, ValueError):
+                    continue  # Keep records whose readability or paths are uncertain.
 
     def complete(self, claim: JobClaim, result: dict[str, Any]) -> dict[str, Any]:
         stored = dict(result)
@@ -641,6 +653,35 @@ def _output_files_exist(output_files: dict[str, Any]) -> bool:
         if not value or not Path(str(value)).exists():
             return False
     return True
+
+
+def _outputs_confirmed_missing(output_files: Any) -> bool:
+    """An empty/malformed map or inaccessible artifact is not deletion evidence."""
+    if not isinstance(output_files, dict) or not output_files:
+        return False
+    if any(not isinstance(value, str) or not value.strip() for value in output_files.values()):
+        return False
+    missing = False
+    for value in output_files.values():
+        try:
+            windows = PureWindowsPath(value)
+            if windows.drive and (not windows.is_absolute() or len(windows.drive) != 2):
+                return False  # Drive-relative, UNC and extended paths are unresolved.
+            if "\\" in value and not windows.drive and not value.startswith("/"):
+                return False
+            if os.name == "nt":
+                normalized = to_windows_hint(value)
+                if value.startswith("/") and normalized == value:
+                    return False  # A native Windows caller cannot inspect WSL-only paths.
+                artifact = Path(normalized)
+            else:
+                artifact = to_wsl_path(value)
+            artifact.stat()  # Relative paths use the same cwd as the OCR service.
+        except FileNotFoundError:
+            missing = True
+        except (OSError, ValueError):
+            return False
+    return missing
 
 
 def _now_iso() -> str:

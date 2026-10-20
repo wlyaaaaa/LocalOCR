@@ -49,12 +49,12 @@ class ServerLifecycleTest(unittest.TestCase):
     def test_untrusted_host_is_rejected_before_work(self):
         for host in ("evil.example:18665", "127.0.0.1.evil.example", "evil.example"):
             self.assertEqual(self.client.get("/health", headers={"Host": host}).status_code, 400)
-            self.assertEqual(self.client.post("/ocr/path", json={"path": "sample.png"}, headers={"Host": host}).status_code, 400)
+            self.assertEqual(self.client.post("/ocr/path", json={"path": "/tmp/sample.png"}, headers={"Host": host}).status_code, 400)
         self.assertEqual(self.service.calls, [])
 
     def test_json_body_requires_json_content_type(self):
         for headers in ({}, {"Content-Type": "text/plain"}, {"Content-Type": "application/x-www-form-urlencoded"}):
-            response = self.client.post("/ocr/path", content='{"path":"sample.png"}', headers=headers)
+            response = self.client.post("/ocr/path", content='{"path":"/tmp/sample.png"}', headers=headers)
             self.assertEqual(response.status_code, 415)
         self.assertEqual(self.service.calls, [])
 
@@ -68,7 +68,7 @@ class ServerLifecycleTest(unittest.TestCase):
         self.assertEqual(self.service.calls, [])
 
     def test_native_and_same_origin_clients_keep_json_and_upload_support(self):
-        response = self.client.post("/ocr/path", content='{"path":"sample.png"}',
+        response = self.client.post("/ocr/path", content='{"path":"/tmp/sample.png"}',
                                     headers={"Origin": "http://127.0.0.1:18665", "Content-Type": "application/json; charset=utf-8"})
         self.assertEqual(response.status_code, 200)
         response = self.client.post("/ocr/file", files={"file": ("sample.png", b"synthetic", "image/png")})
@@ -77,6 +77,17 @@ class ServerLifecycleTest(unittest.TestCase):
 
     def test_localhost_remains_an_allowed_host(self):
         self.assertEqual(self.client.get("/health", headers={"Host": "localhost:18665"}).status_code, 200)
+
+    def test_path_entry_requires_absolute_input_and_output_paths(self):
+        for field in ("path", "out_dir"):
+            for value in ("sample.png", r"round04\cache\ocr", "", "E:relative.png", r"\\server\share\out", "//server/share/out"):
+                response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png", field: value})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(f"{field} must be an absolute", response.json()["detail"])
+        self.assertEqual(self.service.calls, [])
+        response = self.client.post("/ocr/path", json={"path": r"E:\sample.png", "out_dir": "/tmp/out"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.service.calls[0][0][0][0].as_posix(), "/mnt/e/sample.png")
 
     def test_health_is_lightweight_and_distinguishes_gpu_not_yet_probed(self):
         response = self.client.get("/health")
@@ -100,13 +111,13 @@ class ServerLifecycleTest(unittest.TestCase):
         self.assertNotIn("private diagnostic", str(body))
 
     def test_request_execution_deadline_reaches_service(self):
-        response = self.client.post("/ocr/path", json={"path": "sample.png", "timeout_sec": 17})
+        response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png", "timeout_sec": 17})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.service.calls[0][1]["timeout_sec"], 17)
 
     def test_invalid_execution_deadline_is_rejected_before_work(self):
         for timeout in (0, -1, 7201, "invalid"):
-            response = self.client.post("/ocr/path", json={"path": "sample.png", "timeout_sec": timeout})
+            response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png", "timeout_sec": timeout})
             self.assertEqual(response.status_code, 422)
         self.assertEqual(self.service.calls, [])
 
@@ -121,7 +132,7 @@ class ServerLifecycleTest(unittest.TestCase):
         ]
         for error, status, code in failures:
             self.service.error = error
-            response = self.client.post("/ocr/path", json={"path": "sample.png"})
+            response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png"})
             self.assertEqual(response.status_code, status)
             self.assertEqual(response.json()["error_code"], code)
             self.assertIn(str(error), response.json()["detail"])
@@ -131,14 +142,14 @@ class ServerLifecycleTest(unittest.TestCase):
         error = ExecutionError("execution_timeout", "deadline", http_status=504)
         error.context = {"job_key": "a" * 64, "job_id": "a" * 16, "partial_output_files": {"md": "partial.md"}}
         self.service.error = error
-        response = self.client.post("/ocr/path", json={"path": "sample.png"})
+        response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png"})
         self.assertEqual(response.status_code, 504)
         self.assertEqual(response.json()["job_key"], "a" * 64)
         self.assertEqual(response.json()["partial_output_files"], {"md": "partial.md"})
 
     def test_known_active_job_returns_conflict_not_bad_request(self):
         self.service.response = {"ok": False, "status": "active_localocr_task", "job_key": "b" * 64}
-        response = self.client.post("/ocr/path", json={"path": "sample.png"})
+        response = self.client.post("/ocr/path", json={"path": "/tmp/sample.png"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["job_key"], "b" * 64)
 

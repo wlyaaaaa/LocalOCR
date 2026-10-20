@@ -60,7 +60,7 @@ UVDoc 是纸张形变矫正，不是截图锐化；现行普通 OCR 默认关闭
 
 **现象**：`start_server.ps1` 等待 `/health` 超时。
 
-**排查**：读取 `_server/localocr-api.log` 和 `_server/wsl-launcher.log`，再检查目标端口的 `/health`。
+**排查**：读取 `_server/localocr-api.log`，再检查目标端口的 `/health`。
 `start_server.ps1` 使用启动锁、端口检查及独立标准句柄启动 WSL；不要另开重复的后台启动脚本。
 
 常见原因：

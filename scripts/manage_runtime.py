@@ -135,7 +135,7 @@ def activate(runtime_root: Path, receipt: Path) -> None:
         raise RuntimeError("Activate from the candidate source snapshot, not the editable development checkout")
     ensure_stopped()
     current, previous = runtime_root / 'current', runtime_root / 'previous'
-    old = current.resolve(strict=True) if current.is_symlink() else (Path('/root/localocr-venv') if Path('/root/localocr-venv/bin/python').is_file() else None)
+    old = current.resolve(strict=True) if current.is_symlink() else None
     if old is not None and old != target: atomic_link(previous, old)
     atomic_link(current, target)
     print(json.dumps({'active': str(current.resolve(strict=True)), 'previous': str(previous.resolve()) if previous.is_symlink() else None}))

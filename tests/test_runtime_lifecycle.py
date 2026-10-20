@@ -542,8 +542,8 @@ class RuntimeLifecycleTest(unittest.TestCase):
             root = Path(tmp)
             hang_source = root / "hang.png"
             other_source = root / "other.png"
-            hang_source.write_bytes(b"not-an-ocr-input")
-            other_source.write_bytes(b"not-an-ocr-input")
+            hang_source.write_bytes((Path(__file__).parent / "samples" / "probe_text.png").read_bytes())
+            other_source.write_bytes(hang_source.read_bytes())
             lost = threading.Event()
             leases: list[FakeLease] = []
 
@@ -595,8 +595,8 @@ class RuntimeLifecycleTest(unittest.TestCase):
             root = Path(tmp)
             hang_source = root / "hang.png"
             success_source = root / "success.png"
-            hang_source.write_bytes(b"not-an-ocr-input")
-            success_source.write_bytes(b"not-an-ocr-input")
+            hang_source.write_bytes((Path(__file__).parent / "samples" / "probe_text.png").read_bytes())
+            success_source.write_bytes(hang_source.read_bytes())
             lost = threading.Event()
             leases: list[FakeLease] = []
 

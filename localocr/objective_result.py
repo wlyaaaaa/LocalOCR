@@ -585,13 +585,14 @@ def _source_info(path: Path) -> dict[str, Any]:
 def _image_readable(path: Path) -> bool:
     try:
         import cv2  # type: ignore
-
+    except ImportError:
+        # Preserve the optional-decoder behavior for model-free installations.
+        return True
+    try:
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         return image is not None and image.size > 0
     except Exception:
-        # A missing optional decoder must not turn an empty model response into
-        # positive no-text evidence.  The result remains indeterminate.
-        return True
+        return False
 
 
 def _uniform_image_evidence(path: Path, source_info: Mapping[str, Any]) -> dict[str, Any] | None:

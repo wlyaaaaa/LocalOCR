@@ -45,6 +45,7 @@ PID 和进程启动时间；启动时可以立即恢复已死亡/被复用 PID �
 目录内一个 `.job-registry.guard` 仅串行化元数据提交；每个 claim/terminal 都校验 execution id，
 Windows 不会在锁住数据文件时重开/删除它。终态落盘失败保留可恢复锁，协调者明确 not-ready。
 `write_files=False` 不落任务或输出文件。
+启动恢复在同一个 registry guard 下删除输出文件已明确缺失的 completed 缓存记录；在途、失败、无输出映射或读取状态不明的记录保留。最近任务由 AI 直接读 `_server/jobs/*.json`。
 
 `job_key` 绑定源路径/hash/大小、请求语义、设备、路由策略、输出版本、模型配置、实际权重、关键依赖、实现、预处理、实际 VL 升级目标和输出目录。
 所有输出采用临时文件加原子替换，completed manifest 是最终提交点。缓存只依赖
@@ -96,6 +97,8 @@ PDF 坐标明确是渲染像素，并记录 `render_scale` 与尺寸，不伪装
 HTTP 409 表示忙碌/冲突，503 表示 broker 不可用或租约丢失，504 表示执行期限，
 400/422 表示请求参数，404 表示原件/任务不存在，500 表示实际运行异常。
 错误的 `error_code`、`detail` 和已有 `job_key` 位于 JSON 顶层，Windows wrapper 原样保留。
+`/ocr/path` 要求输入及显式输出目录为绝对路径。空文件或无法解码的图片返回 HTTP 400、`input_unreadable` 和源路径；wrapper 退出码为 2。
+两个 PowerShell OCR wrapper 默认输出文件级摘要和结果路径，`-Full` 保留完整响应；服务端结果及文件中的逐页文字、坐标不变。
 
 ## 发布隔离与回滚
 

@@ -69,8 +69,27 @@ class ServiceProcessTests(unittest.TestCase):
     def source(self, root: Path, name="sample.png", data=b"image bytes") -> Path:
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        image = (Path(__file__).parent / "samples" / "probe_text.png").read_bytes()
+        path.write_bytes(image + data)
         return path
+
+    def test_unreadable_images_are_input_errors_before_inference(self):
+        from localocr.server import _error_response
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, service = Path(tmp), FakeService(Path(tmp))
+            image = (Path(__file__).parent / "samples" / "probe_text.png").read_bytes()
+            for data in (b"", b"not an image", image[:64]):
+                source = self.source(root)
+                source.write_bytes(data)
+                with self.assertRaises(ExecutionError) as raised:
+                    service.process_inputs([source], engine_choice="ocr", out_dir=root / "out")
+                response = _error_response(raised.exception)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(raised.exception.code, "input_unreadable")
+                self.assertEqual(raised.exception.context["source_path"], str(source))
+            self.assertEqual(service.calls, [])
+            self.assertEqual(list((root / "jobs").glob("*.lock")), [])
 
     def test_completed_cache_is_reused(self):
         with tempfile.TemporaryDirectory() as tmp:

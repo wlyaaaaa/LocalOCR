@@ -214,7 +214,7 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
                     "-d",
                     "Ubuntu",
                     "-e",
-                    "/root/localocr-venv/bin/python",
+                    "/root/localocr-runtimes/current/bin/python",
                     "-c",
                     wsl_probe,
                     str(port),
@@ -239,8 +239,8 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
             response_payload={
                 "ok": False,
                 "status": "failed",
-                "error_code": "input",
-                "detail": "GpuBrokerConflict: request rejected for test",
+                "error_code": "input_unreadable",
+                "detail": "Input image is unreadable or incomplete.",
                 "job_key": "job-key-400",
             },
         )
@@ -257,11 +257,11 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
             )
 
         payload = self._payload(completed)
-        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.returncode, 2)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "failed")
-        self.assertEqual(payload["error_code"], "input")
-        self.assertEqual(payload["detail"], "GpuBrokerConflict: request rejected for test")
+        self.assertEqual(payload["error_code"], "input_unreadable")
+        self.assertEqual(payload["detail"], "Input image is unreadable or incomplete.")
         self.assertEqual(payload["http_status"], 400)
         self.assertEqual(fake.post_count, 1)
         self.assertEqual(fake.post_bodies[0]["timeout_sec"], 17)
@@ -294,6 +294,27 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         self.assertIn("foreign-service", payload["detail"])
         self.assertIn("not LocalOCR", payload["detail"])
         self.assertEqual(fake.post_count, 0)
+
+    def test_wrappers_resolve_relative_paths_and_limit_page_output_unless_full(self) -> None:
+        result = {"pages": [{"blocks": [{"text": "x" * 50000}]}], "display_summary": "done",
+                  "output_files": {"json": "result.json"}, "coverage": {"status": "complete"}}
+        for script in ("ocr_once.ps1", "ocr_smart.ps1"):
+            for full in (False, True):
+                with self.subTest(script=script, full=full), FakeLocalOcr(
+                    response_payload={"ok": True, "count": 1, "results": [result]}
+                ) as fake:
+                    completed = self._run_wrapper(script, r"input folder\sample.png", "-OutDir",
+                        r"round04\cache\ocr", "-Port", str(fake.port), *(["-Full"] if full else []))
+                    payload = self._payload(completed)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(fake.post_bodies[0]["path"], str(Path.cwd() / "input folder/sample.png"))
+                    self.assertEqual(fake.post_bodies[0]["out_dir"], str(Path.cwd() / "round04/cache/ocr"))
+                    if full:
+                        self.assertEqual(payload["results"][0], result)
+                    else:
+                        self.assertLess(len(completed.stdout), 4000)
+                        self.assertEqual(payload["results"][0]["page_count"], 1)
+                        self.assertEqual(payload["results"][0]["output_files"], result["output_files"])
 
     def test_ocr_once_distinguishes_http_transport_timeout(self) -> None:
         fake = FakeLocalOcr(

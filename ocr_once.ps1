@@ -15,12 +15,14 @@ param(
     [ValidateRange(1, 7200)]
     [int]$ExecutionTimeoutSec = 300,
     [int]$StartupTimeoutSec = 600,
-    [switch]$StopAfter
+    [switch]$StopAfter,
+    [switch]$Full
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ScriptDir 'scripts/wrapper_summary.ps1')
 $base = "http://${HostAddress}:$Port"
 
 function Read-JsonSafely {
@@ -102,7 +104,7 @@ function Get-WrapperExitCode {
     if ($status -eq "client_timeout" -or $errorCode -in @("execution_timeout", "client_timeout")) {
         return 124
     }
-    if ($errorCode -eq "missing_path" -or $HttpStatus -eq 404) {
+    if ($errorCode -in @("missing_path", "input_unreadable") -or $HttpStatus -eq 404) {
         return 2
     }
     if ($errorCode -eq "broker_unavailable" -or $errorCode -eq "lease_lost" -or $HttpStatus -eq 503) {
@@ -282,6 +284,8 @@ $result = $null
 $startupOutput = ""
 
 try {
+    if (-not $Path.StartsWith('/')) { $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path) }
+    if ($OutDir -and -not $OutDir.StartsWith('/')) { $OutDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir) }
     $health = Get-LocalOcrHealth
     if ($null -eq $health) {
         try {
@@ -350,5 +354,6 @@ if ($startupOutput -and $result -and $result.ok -ne $true) {
     $result | Add-Member -NotePropertyName startup_output_tail -NotePropertyValue (Get-TextTail $startupOutput) -Force
 }
 
+if (-not $Full) { $result = ConvertTo-LocalOcrSummary $result }
 $result | ConvertTo-Json -Depth 100
 exit $exitCode

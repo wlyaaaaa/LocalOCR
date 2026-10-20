@@ -6,13 +6,7 @@ export PADDLE_PDX_DISABLE_DEV_MODEL_WL=true
 export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true
 export PADDLE_PDX_MODEL_SOURCE=modelscope
 PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-if [[ -n "${LOCALOCR_RUNTIME:-}" ]]; then
-    RUNTIME=$LOCALOCR_RUNTIME
-elif [[ -L /root/localocr-runtimes/current || -e /root/localocr-runtimes/current ]]; then
-    RUNTIME=/root/localocr-runtimes/current
-else
-    RUNTIME=/root/localocr-venv
-fi
+RUNTIME=${LOCALOCR_RUNTIME:-/root/localocr-runtimes/current}
 [[ -x "$RUNTIME/bin/python" ]] || { echo "LocalOCR runtime is missing or broken: $RUNTIME" >&2; exit 2; }
 export LOCALOCR_PROJECT_ROOT="$PROJECT"
 if [[ -d "$RUNTIME/app/localocr" ]]; then

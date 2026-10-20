@@ -7,11 +7,11 @@ import tempfile
 import threading
 import psutil
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -25,7 +25,6 @@ from .gpu_broker import (
     GpuBrokerLease,
     GpuBrokerLeaseLost,
 )
-from .observer import ObserverProjection
 from .service import OCRService
 from .runtime import DEFAULT_TIMEOUT_SEC, MAX_TIMEOUT_SEC, ExecutionError
 
@@ -153,29 +152,19 @@ def cancel_job(job_key: str):
     )
 
 
-def get_observer_projection() -> ObserverProjection:
-    if _service is not None:
-        return ObserverProjection(_service.job_registry.job_dir)
-    project_root = Path(os.environ.get("LOCALOCR_PROJECT_ROOT") or Path(__file__).resolve().parent.parent)
-    return ObserverProjection(project_root / "_server" / "jobs")
-
-
-@app.get("/observer/jobs")
-def observer_jobs(limit: int = 100) -> dict:
-    return get_observer_projection().list_jobs(limit=limit)
-
-
-@app.get("/observer/jobs/{job_id}")
-def observer_job(job_id: str) -> dict:
-    projected = get_observer_projection().get_job(job_id)
-    if projected is None:
-        raise HTTPException(status_code=404, detail="observer_job_not_found")
-    return projected
-
-
 @app.post("/ocr/path")
 def ocr_path(req: OCRPathRequest):
     try:
+        for name in ("path", "out_dir"):
+            raw = getattr(req, name)
+            if raw is None:
+                continue
+            value = raw.strip().strip('"')
+            windows = PureWindowsPath(value)
+            windows_drive = windows.is_absolute() and len(windows.drive) == 2
+            wsl_absolute = PurePosixPath(value).is_absolute() and not windows.drive
+            if not (windows_drive or wsl_absolute):
+                raise ValueError(f"{name} must be an absolute Windows drive or WSL path; UNC paths are unsupported.")
         path = to_wsl_path(req.path)
         out_dir = to_wsl_path(req.out_dir) if req.out_dir else None
         service = get_service()

@@ -32,6 +32,23 @@ def _decode_process_output(raw: bytes) -> str:
 
 
 class WindowsWrapperTest(unittest.TestCase):
+    def _windows_temp_dir(self) -> str | None:
+        if os.name == "nt":
+            return None
+        try:
+            windows_temp = _decode_process_output(subprocess.run(
+                ["cmd.exe", "/d", "/c", "echo %TEMP%"], check=True, capture_output=True, timeout=10,
+            ).stdout).strip()
+            translated = subprocess.run(
+                ["wslpath", "-u", windows_temp], check=True, capture_output=True,
+                text=True, timeout=10,
+            ).stdout.strip()
+            if not translated or not Path(translated).is_dir():
+                raise OSError("Windows TEMP is not accessible from WSL")
+            return translated
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.skipTest(f"Cannot obtain Windows temporary directory: {exc}")
+
     def _windows_script_path(self, path: Path) -> str:
         if os.name == "nt":
             return str(path)
@@ -75,7 +92,7 @@ class WindowsWrapperTest(unittest.TestCase):
 
     @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_drag_drop_batch_launches_selected_input(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
             folder = Path(temp_dir)
             batch = folder / "start.bat"
             batch.write_bytes((ROOT / "start.bat").read_bytes())
@@ -109,7 +126,7 @@ class WindowsWrapperTest(unittest.TestCase):
     def _assert_start_converts_chinese_windows_path_before_cli(
         self, executable: str, *, relative: bool = False, option_form: str | None = None
     ) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
             # Run the exact release wrapper bytes from a real Windows temporary path,
             # even when its immutable source snapshot lives on the WSL filesystem.
             script_directory = Path(temp_dir) / "入口" if option_form else Path(temp_dir)
