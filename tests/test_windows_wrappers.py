@@ -388,7 +388,8 @@ Set-Location -LiteralPath '{working_dir}'
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
         for filename, function in (("ocr_smart.ps1", "Invoke-BoundedProcess"),
                                    ("stop_server.ps1", "Invoke-WslCommand")):
-            with self.subTest(function=function), tempfile.TemporaryDirectory() as temp_dir:
+            # Windows children need drive-local fixtures rather than WSL /tmp UNC paths.
+            with self.subTest(function=function), tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
                 folder = Path(temp_dir)
                 child = folder / "child.ps1"
                 parent = folder / "parent.ps1"
