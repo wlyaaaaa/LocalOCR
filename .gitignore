@@ -28,3 +28,6 @@ _make_*.py
 # 系统
 .DS_Store
 Thumbs.db
+
+# Legacy WSL output paths with mapped backslashes
+/**
