@@ -5,6 +5,7 @@ import unittest
 import json
 import multiprocessing
 import os
+import threading
 import time
 from unittest.mock import patch
 
@@ -66,7 +67,7 @@ def close_claim_fd(claim) -> None:
 
 
 class JobRegistryTest(unittest.TestCase):
-    def test_startup_removes_only_completed_caches_with_confirmed_missing_outputs(self):
+    def test_retire_removes_only_completed_caches_with_confirmed_missing_outputs(self):
         from localocr.job_registry import JobRegistry, _outputs_confirmed_missing
         from localocr.path_utils import to_wsl_path
 
@@ -92,12 +93,67 @@ class JobRegistryTest(unittest.TestCase):
             before = Path.cwd()
             try:
                 os.chdir(root)
-                JobRegistry(jobs).recover_abandoned()
+                registry = JobRegistry(jobs)
+                registry.recover_abandoned()
+                self.assertEqual({p.stem for p in jobs.glob("*.json")}, set(cases))
+                self.assertTrue(registry.retire_missing_outputs())
             finally:
                 os.chdir(before)
             self.assertEqual({p.stem for p in jobs.glob("*.json")}, set(cases) - {"missing"})
             with patch.object(Path, "stat", side_effect=PermissionError("unreadable")):
                 self.assertFalse(_outputs_confirmed_missing({"txt": str(artifact)}))
+
+    def test_retire_missing_outputs_obeys_daily_stamp(self):
+        from localocr.job_registry import JobRegistry
+
+        for stamp_age in (None, 10, 90000):
+            with self.subTest(stamp_age=stamp_age), tempfile.TemporaryDirectory() as tmp:
+                jobs = Path(tmp)
+                manifest = jobs / "missing.json"
+                manifest.write_text(json.dumps({"status": "completed", "output_files": {"txt": str(jobs / "missing.txt")}}))
+                stamp = jobs / ".missing-outputs-retired.stamp"
+                now = time.time()
+                if stamp_age is not None:
+                    stamp.touch()
+                    os.utime(stamp, (now - stamp_age, now - stamp_age))
+                executed = stamp_age != 10
+                self.assertEqual(JobRegistry(jobs).retire_missing_outputs(), executed)
+                self.assertEqual(manifest.exists(), not executed)
+                self.assertTrue(stamp.exists())
+                if executed:
+                    self.assertGreaterEqual(stamp.stat().st_mtime, now - 1)
+                else:
+                    self.assertAlmostEqual(stamp.stat().st_mtime, now - stamp_age, places=3)
+
+    def test_retire_missing_outputs_stops_without_deleting_or_stamping(self):
+        from localocr.job_registry import JobRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs = Path(tmp)
+            manifest = jobs / "missing.json"
+            manifest.write_text(json.dumps({"status": "completed", "output_files": {"txt": str(jobs / "missing.txt")}}))
+            stop = threading.Event()
+            stop.set()
+            self.assertFalse(JobRegistry(jobs).retire_missing_outputs(stop))
+            self.assertTrue(manifest.exists())
+            self.assertFalse((jobs / ".missing-outputs-retired.stamp").exists())
+
+    def test_retire_missing_outputs_rechecks_lock_inside_guard(self):
+        from localocr.job_registry import JobRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs = Path(tmp)
+            manifest = jobs / "missing.json"
+            manifest.write_text(json.dumps({"status": "completed", "output_files": {"txt": str(jobs / "missing.txt")}}))
+
+            def missing_after_lock_appears(_outputs):
+                manifest.with_suffix(".lock").touch()
+                return True
+
+            with patch("localocr.job_registry._outputs_confirmed_missing", side_effect=missing_after_lock_appears) as missing:
+                self.assertTrue(JobRegistry(jobs).retire_missing_outputs())
+            missing.assert_called_once()
+            self.assertTrue(manifest.exists())
 
     def test_legacy_plain_pid_lock_uses_narrow_reuse_proof(self):
         from localocr.job_registry import JobRegistry

@@ -49,7 +49,7 @@ PID 和进程启动时间；启动时可以立即恢复已死亡/被复用 PID �
 目录内一个 `.job-registry.guard` 仅串行化元数据提交；每个 claim/terminal 都校验 execution id，
 Windows 不会在锁住数据文件时重开/删除它。终态落盘失败保留可恢复锁，协调者明确 not-ready。
 `write_files=False` 不落任务或输出文件。
-启动恢复在同一个 registry guard 下删除输出文件已明确缺失的 completed 缓存记录；在途、失败、无输出映射或读取状态不明的记录保留。最近任务由 AI 直接读 `_server/jobs/*.json`。
+启动时只回收死掉的任务锁；输出已明确缺失的 completed 缓存记录由后台线程每天最多清理一次，逐条在 registry guard 下复核后删除；缓存命中本来就逐次复验输出。最近任务由 AI 直接读 `_server/jobs/*.json`。
 
 `job_key` 绑定源路径/hash/大小、请求语义、设备、路由策略、输出版本、模型配置、实际权重、关键依赖、实现、预处理、实际 VL 升级目标和输出目录。
 设备身份使用实际的 `gpu:N` 或 `cpu`。gpu 策略只查 GPU 缓存，cpu 策略只查 CPU 缓存；
