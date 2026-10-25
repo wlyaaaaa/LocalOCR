@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -267,7 +268,7 @@ class JobRegistry:
             self._write_manifest(claim.manifest_path, manifest)
 
     def recover_abandoned(self) -> None:
-        """Recover dead owners and retire completed caches with missing artifacts."""
+        """Recover stale task locks left by dead owners."""
         if not self.job_dir.exists():
             return
         with self._registry_guard():
@@ -286,17 +287,45 @@ class JobRegistry:
                     )
                     self._write_manifest(manifest_path, manifest)
                 lock.unlink(missing_ok=True)
-            for path in self.job_dir.glob("*.json"):
-                try:
-                    if path.with_suffix(".lock").exists():
+
+    def retire_missing_outputs(
+        self, stop: threading.Event | None = None, *, min_interval_sec: float = 86400
+    ) -> bool:
+        """Retire confirmed missing completed outputs in a throttled background pass."""
+        if not self.job_dir.exists():
+            return False
+        stamp = self.job_dir / ".missing-outputs-retired.stamp"
+        try:
+            if time.time() - stamp.stat().st_mtime < min_interval_sec:
+                return False
+        except FileNotFoundError:
+            pass
+        for path in self.job_dir.glob("*.json"):
+            if stop is not None and stop.is_set():
+                return False
+            try:
+                lock = path.with_suffix(".lock")
+                if lock.exists():
+                    continue
+                manifest = _read_json(path)
+                if manifest.get("status") != "completed" or not _outputs_confirmed_missing(
+                    manifest.get("output_files")
+                ):
+                    continue
+                with self._registry_guard():
+                    if lock.exists():
                         continue
                     manifest = _read_json(path)
                     if manifest.get("status") == "completed" and _outputs_confirmed_missing(
                         manifest.get("output_files")
                     ):
                         path.unlink(missing_ok=True)
-                except (OSError, ValueError):
-                    continue  # Keep records whose readability or paths are uncertain.
+            except (OSError, ValueError):
+                continue  # Keep records whose readability or paths are uncertain.
+        if stop is not None and stop.is_set():
+            return False
+        stamp.touch()
+        return True
 
     def complete(self, claim: JobClaim, result: dict[str, Any]) -> dict[str, Any]:
         stored = dict(result)

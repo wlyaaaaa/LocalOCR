@@ -70,6 +70,13 @@ class OCRService:
             job_dir if job_dir is not None else self.project_root / "_server" / "jobs"
         )
         self.job_registry.recover_abandoned()
+        self._retire_stop = threading.Event()
+        threading.Thread(
+            target=self.job_registry.retire_missing_outputs,
+            args=(self._retire_stop,),
+            name="localocr-retire-missing-outputs",
+            daemon=True,
+        ).start()
         self._runtime = runtime or InferenceRuntime()
         self._vl_runtime = vl_runtime if vl_runtime is not None else (runtime if runtime is not None else InferenceRuntime())
         self._probe_gpu = probe_on_start
@@ -132,6 +139,7 @@ class OCRService:
             return True
 
     def close(self) -> None:
+        self._retire_stop.set()
         with self._state_lock:
             self._closed = True
             if self._execution is not None:

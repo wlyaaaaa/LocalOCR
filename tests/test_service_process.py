@@ -66,6 +66,30 @@ class FakeService(OCRService):
 
 
 class ServiceProcessTests(unittest.TestCase):
+    def test_missing_output_retirement_does_not_block_startup_or_close(self):
+        entered, finish = threading.Event(), threading.Event()
+
+        def retire(stop):
+            entered.set()
+            finish.wait(5)
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "localocr.service.JobRegistry.retire_missing_outputs", side_effect=retire
+        ):
+            service = FakeService(Path(tmp))
+            worker = None
+            try:
+                self.assertTrue(entered.wait(5))
+                worker = next(t for t in threading.enumerate() if t.name == "localocr-retire-missing-outputs")
+                self.assertTrue(worker.daemon)
+                with patch.object(service, "_close_runtimes", side_effect=lambda: self.assertTrue(service._retire_stop.is_set())):
+                    service.close()
+                self.assertTrue(worker.is_alive())
+            finally:
+                finish.set()
+                if worker is not None:
+                    worker.join(5)
+
     def source(self, root: Path, name="sample.png", data=b"image bytes") -> Path:
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
