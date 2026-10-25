@@ -6,13 +6,14 @@
 Windows wrapper / CLI
   → API/CLI coordinator：输入、期限、任务状态、输出提交
   → LocalGpuBroker：全机 GPU 排他租约
-  → 一个可终止的 warm worker：GPU 探针、模型、PDF 渲染、推理
+  → 两个可终止的 warm worker 槽：主槽 OCR/Structure，VL 槽
   → 请求绑定的输出文件 + 最后提交的 job manifest
 ```
 
 不新增服务、队列或数据库。API 不导入 Paddle，也不持有模型；`runtime.py` 用私有 Pipe
-与一个 spawn 工作进程通信。同模型连续请求热复用，切换模型时结束旧进程再创建新进程，
-避免多套模型和 native allocator 长期叠加。CLI 使用同一 `OCRService`，不另维护一条推理路径。
+与两个 spawn 工作进程槽通信。主槽处理 OCR/Structure，VL 槽处理自动升级及显式 VL，
+避免逐张升级时反复重载 OCR 和 VL；同槽的 profile、revision、device 相同才热复用。
+CLI 使用同一 `OCRService`，不另维护一条推理路径。
 
 ## 任务与资源生命周期
 
@@ -20,14 +21,17 @@ Windows wrapper / CLI
   wrapper `-ExecutionTimeoutSec` 明确调整，最大 7200 秒；目录内的每个文件不会重置期限。
 - 服务只允许一个在途计算请求。相同已完成请求可复用哈希有效的缓存；计算忙碌时返回
   HTTP 409、`active_localocr_task` 与任务定位，不隐式排入第二个队列。
-- API 持有短 TTL 租约并续租；worker 在 GPU 探针和模型导入前验证父租约的真实 token。
+- 每个文件分别申请和释放短 TTL GPU 租约并续租，渲染任务可在两个文件之间取得 GPU；worker 在 GPU 探针和模型导入前验证父租约的真实 token。
   不再接受“父已持租约”的未验证布尔标志。续租失败必须传播到监督器。
+  WSL 优先经 Windows `curl.exe` 访问本机 broker，JSON 从 stdin 传入；找不到 curl 时使用 PowerShell 桥。非 WSL 使用 urllib。
 - deadline、取消、租约丢失、worker 崩溃和服务关闭都会停止进程组。WSL worker 的
   parent-death 保护和同组小 guard 同时覆盖父进程硬退出及普通子孙进程。
 - RSS 上限为服务及其子进程合计 30 GB，不是整机限制，也不是 GPU VRAM 指标。
   模型启动前及运行中每 3 秒读取真实宿主可用物理内存（WSL 读取 Windows 宿主），保留总量 10% 且至少 1 GiB；低于或等于保留量、探测失败均以 HTTP 503 结束本服务工作进程，固定 RSS 上限另行监督。查询前后检查取消与期限；查询期间监督循环短暂阻塞，查询超时不超过 8 秒或剩余期限。
+  WSL 复用一个按需启动、带锁的常驻 PowerShell 探针，每次通过 stdin/stdout 查询宿主内存；超时、退出或格式错即清理，下次查询重开。服务关闭时同步关闭探针。
   超限只结束自己的工作进程，保留其它程序。OOM 等 native 错误明确失败。
-- `/health` 返回 `active_jobs`、阶段、PID、期限、当前模型与服务内存峰值。
+- 两个温热槽的内存按协调进程及全部子进程合计监督，30 GB 上限不变，不分槽各算一份额度。
+- `/health` 返回 `active_jobs`、阶段、主槽 `worker_pid`、`vl_worker_pid`、主槽 `worker_device`、期限、两槽当前模型与服务内存峰值（两槽记录的最大值）。
   `gpu_status=not_probed` 表示 API 就绪但尚未在合法租约内执行 GPU 探针，不冒充 GPU 已验证。
 
 Windows 启动器仅把显式允许的 NUL/独立日志句柄传给长驻 `wsl.exe`，不能继承调用者的
@@ -48,6 +52,8 @@ Windows 不会在锁住数据文件时重开/删除它。终态落盘失败保�
 启动恢复在同一个 registry guard 下删除输出文件已明确缺失的 completed 缓存记录；在途、失败、无输出映射或读取状态不明的记录保留。最近任务由 AI 直接读 `_server/jobs/*.json`。
 
 `job_key` 绑定源路径/hash/大小、请求语义、设备、路由策略、输出版本、模型配置、实际权重、关键依赖、实现、预处理、实际 VL 升级目标和输出目录。
+设备身份使用实际的 `gpu:N` 或 `cpu`。gpu 策略只查 GPU 缓存，cpu 策略只查 CPU 缓存；
+auto 尚在 GPU 路线时只查 GPU 缓存，改走 CPU 后先查 GPU 缓存再查 CPU 缓存。
 所有输出采用临时文件加原子替换，completed manifest 是最终提交点。缓存只依赖
 请求 hash 隔离的 canonical 投影和 objective sidecar；同名 stem 的兼容展示文件被覆盖
 不会使其它请求失去有效缓存。
@@ -60,6 +66,13 @@ auto 首轮 OCR 有结果而 VL 升级失败时，初步文字保存在明确的
 默认 profile 仍是 `ppocrv6-medium`、`paddleocr-vl-1.6`、`pp-structure-v3`。
 `engine=auto` 用低成本规则选首轮模型，普通图片/扫描件先 OCR，逐页困难或表格/公式信号只升级对应页面到 VL，不按文件名猜版式；
 显式 `engine` 或 `model` 保持调用者选择，结构化任务使用 `structure`。
+`device=auto|gpu|cpu` 独立选择设备。auto 遇申请租约冲突或 broker 不可用时，仅支持 CPU 的 OCR profile
+让本次请求剩余文件粘在 CPU；失租约不触发切换。cpu 从不访问 broker，工作进程在导入 Paddle 前
+清空 `CUDA_VISIBLE_DEVICES`，跳过 GPU 探针和租约核验；只有 `ppocrv6-medium` 提供 CPU 参数，
+固定 `enable_mkldnn=false`、`cpu_threads=10`。VL/Structure 不走 CPU。
+auto 在 CPU 上保留首轮 OCR，不执行 VL 升级；route 标记 `escalation_skipped.reason=gpu_unavailable`
+及问题页，附加质量警告 `escalation_skipped_gpu_unavailable`，质量不为 sufficient。
+表格信号只统计细线交点，先去掉整块深色字幕条、标题栏和暗角。
 VL 的 `use_queues=False` 与当前单文件/逐页调用匹配，避免不必要的内部异步队列；模型能力不降级。
 安装预热也复用同一个监督路径和 profile，需显式 `--allow-heavy`，不在安装脚本另留无租约的 GPU 探针。
 

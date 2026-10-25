@@ -5,7 +5,7 @@ from numbers import Real
 from typing import Any
 
 
-POLICY_VERSION = "ocr-page-quality-v2"
+POLICY_VERSION = "ocr-page-quality-v3"
 LOW_SCORE_THRESHOLD = 0.80
 VERY_LOW_SCORE_THRESHOLD = 0.50
 MEAN_SCORE_TRIGGER = 0.78
@@ -115,8 +115,11 @@ def page_structure_signals(page: dict[str, Any], image_path) -> list[str]:
         if factor < 1:
             image = cv2.resize(image, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
         mask = cv2.threshold(image, 185, 255, cv2.THRESH_BINARY_INV)[1]
-        horizontal = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((1, max(30, image.shape[1] // 10)), np.uint8))
-        vertical = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((max(30, image.shape[0] // 10), 1), np.uint8))
+        # 只认细线，整块深色区域（字幕条、标题栏、暗角）先去掉。
+        thick = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        lines = cv2.bitwise_and(mask, cv2.bitwise_not(cv2.dilate(thick, np.ones((3, 3), np.uint8))))
+        horizontal = cv2.morphologyEx(lines, cv2.MORPH_OPEN, np.ones((1, max(30, image.shape[1] // 10)), np.uint8))
+        vertical = cv2.morphologyEx(lines, cv2.MORPH_OPEN, np.ones((max(30, image.shape[0] // 10), 1), np.uint8))
         crosses = cv2.bitwise_and(horizontal, vertical)
         count = cv2.connectedComponents(crosses)[0] - 1
         if count >= 6:

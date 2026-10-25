@@ -56,12 +56,26 @@ Codex / AI 助手默认先用 smart wrapper，避免 PowerShell 长时间卡住�
 
 ```powershell
 .\ocr_smart.ps1 "E:\path\scan.pdf" -Engine auto -ExecutionTimeoutSec 300 -OuterTimeoutSec 330
+# 显卡被占时自动改用 CPU；视频帧一次送整个文件夹
+.\ocr_smart.ps1 "E:\path\video-frames" -Engine auto -Device auto
+# 只用 CPU，或要求 GPU（显卡被占时返回冲突）
+.\ocr_once.ps1 "E:\path\image.png" -Engine ocr -Device cpu
+.\ocr_once.ps1 "E:\path\image.png" -Engine ocr -Device gpu
 ```
+
+`-Device` 接受 `auto`（默认）、`gpu`、`cpu`，CLI 对应 `--device`，另可指定 `gpu:N` / `cuda:N`。
+auto 每个文件分别申请和释放 GPU 租约；显卡被占或 broker 不可用时，支持 CPU 的 OCR profile
+会让本次请求剩余文件都改用 CPU，不在两张之间反复尝试 GPU。CPU 约 10 秒/帧，不占显存；
+VL 和 Structure 只用 GPU。CPU 首轮发现需要升级的页面仍完成 OCR，route 记录
+`escalated=false`、`escalation_skipped.reason=gpu_unavailable` 及页码，并带
+`escalation_skipped_gpu_unavailable` 质量警告；不能视为质量充分。
+渲染出的视频帧建议一次送整个文件夹，复用温热进程。
 
 `ocr_smart.ps1` 只以 `/health.active_jobs` 判断 API 是否忙；字段缺失或无法读取是 `readiness_unknown`，不是空闲。
 `ocr_smart.ps1` 和 `ocr_once.ps1` 默认返回每个文件的精简摘要、覆盖/质量状态、路由及输出路径；逐页文字和坐标从 `results[].output_files.json` 或 objective 文件读取。需要完整 JSON 时加 `-Full`。
 CLI 与 API 共用 `auto` 分流：简单扫描 PDF、法律表单、送达地址确认书、空白表格和纯文字 PDF
 先走 `ocr`；逐页判断空文本、低置信及表格/公式内容信号，仅升级问题页到本地 `vl`，不按文件名猜版式。
+表格线判断只认细线，先去掉字幕条、标题栏和暗角等整块深色区域。
 复杂版面、表格、公式、多栏材料也可以显式传 `-Engine vl`。
 需要表格 HTML、版面块、公式、印章和区域坐标时显式传 `-Engine structure`。
 如果用户指定具体模型，用 `-Model <profile-id>`；显式模型始终优先，不会被 Smart Router 改写。
@@ -107,7 +121,7 @@ Invoke-RestMethod "http://127.0.0.1:18665/jobs/<job_key>/cancel" -Method Post
 `-TimeoutSec` 仅是 HTTP 传输等待；`-OuterTimeoutSec` 是 smart 的客户端总等待；
 `-StartupTimeoutSec` 是 API 冷启动等待（默认 600 秒）。客户端退出不等于服务任务终止，先回查 job，勿盲目重交。
 
-API 本身不导入 Paddle；OCR/VL/Structure 共用一个可替换的温热 worker，同模型复用、换模型回收。
+API 本身不导入 Paddle；OCR/Structure 使用主温热槽，VL 使用独立温热槽，同槽同模型与设备复用。
 `gpu_status=not_probed` 是尚未有 GPU 作业的正常状态，不代表 CPU 降级。`loaded_models` 只表示当前驻留模型。
 `active_jobs` 给出 job、stage、model、source、deadline、worker PID；服务进程树 RSS 上限为 30GB，不限制整机其他程序。
 
@@ -135,6 +149,7 @@ API 请求体：
 {
   "path": "E:\\Projects\\Tools\\LocalOCR\\tests\\samples\\sample_chat_screenshot.png",
   "engine": "auto",
+  "device": "auto",
   "model": "ppocrv6-medium",
   "recursive": false,
   "write_outputs": true,
@@ -151,11 +166,11 @@ API 写盘任务会按源文件路径、文件内容、请求语义、路由策�
 非空 `size_bytes`/`sha256` 均通过复验才可报告 cache hit；内存结果的负向证据仍是 `not_persisted`。
 如果同一任务正在运行，API 会返回 `status=active_localocr_task`、`job_key` 和
 `recommendation=do_not_blindly_retry`（HTTP 409）；此时先查 `/jobs/<job_key>` 与 `/health`，不要马上再提交一次。
-GPU 冲突也返回 409；broker 不可用/失租约为 503；执行超时为 504。读取完整 `error_code`、`detail` 和 job 定位，不能统称为 HTTP 400。
+gpu 策略或不支持 CPU 的 profile 遇到 GPU 冲突返回 409，broker 不可用/失租约为 503；auto 的 OCR 路线可按上述规则改用 CPU，失租约仍失败。执行超时为 504。读取完整 `error_code`、`detail` 和 job 定位，不能统称为 HTTP 400。
 `write_outputs=false` 不登记任务或写正式结果。auto 升级失败时，首轮 OCR 只保存在 `partial/<job_key>`，仍返回失败且不能当成正式成功缓存。
 每个结果还包含 `results[].route`，其中 `effective_engine` 是最终引擎，`reason` 是路由原因，
 `signals` 是命中的信号，`confidence` 在自动路线上为 `null`，不是校准正确率。auto 首轮 OCR 还包含 `difficulty` 和
-`escalated`；发生升级时 `escalation` 会记录原模型与最终 VL 模型。
+`escalated`；发生升级时 `escalation` 会记录原模型与最终 VL 模型。`route.device` 和 `device_reason` 记录实际设备及选择原因。
 
 ## 路由规则（auto 模式）
 

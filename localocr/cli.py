@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 from .gpu_broker import GpuBrokerLease
@@ -23,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out-dir", default="outputs")
     parser.add_argument("--recursive", action="store_true")
-    parser.add_argument("--device", default="gpu:0")
+    parser.add_argument("--device", default="auto", help="auto、gpu、cpu，或 GPU 设备号 gpu:N/cuda:N。")
     parser.add_argument("--tmp-dir", default="_pdf_pages")
     parser.add_argument(
         "--timeout-sec",
@@ -37,9 +38,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 0 < args.timeout_sec <= MAX_TIMEOUT_SEC:
         parser.error(f"--timeout-sec must be in (0, {MAX_TIMEOUT_SEC:g}]")
-    gpu = args.device.lower().startswith(("gpu", "cuda"))
+    requested_device = args.device.lower()
+    if not re.fullmatch(r"auto|cpu|gpu|(?:gpu|cuda):\d+", requested_device):
+        parser.error("--device must be auto, cpu, gpu, gpu:N or cuda:N")
+    device_policy = requested_device if requested_device in {"auto", "gpu", "cpu"} else "gpu"
+    gpu = device_policy != "cpu"
+    worker_device = requested_device.replace("cuda:", "gpu:") if ":" in requested_device else "gpu:0"
     service = OCRService(
-        device=args.device,
+        device=worker_device if gpu else "cpu",
         tmp_dir=args.tmp_dir,
         probe_on_start=not args.no_gpu_probe and gpu,
         gpu_lease_factory=(lambda _owner: GpuBrokerLease("localocr-cli"))
@@ -50,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         response = service.process_inputs(
             args.inputs,
             engine_choice=args.engine,
+            device=device_policy,
             model_choice=args.model,
             recursive=args.recursive,
             out_dir=args.out_dir,

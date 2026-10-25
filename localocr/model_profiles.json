@@ -8,6 +8,7 @@
     {
       "id": "ppocrv6-medium",
       "engine": "ocr",
+      "cpu_options": {"enable_mkldnn": false, "cpu_threads": 10},
       "adapter": "localocr.engines.ppocrv6:PPOCRv6Engine",
       "display_name": "PP-OCRv6_medium (det + rec)",
       "result_engine_name": "PP-OCRv6_medium",

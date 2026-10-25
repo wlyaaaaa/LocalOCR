@@ -83,6 +83,19 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertNotIn("attention_backend", actual["options"])
         self.assertEqual(resolve_model_reference("vl").options["cuda_module_loading"], "LAZY")
 
+    def test_cpu_options_are_applied_only_to_supported_profile(self):
+        from localocr.model_registry import get_engine
+        with patch("localocr.model_registry.importlib.import_module",
+                   return_value=SimpleNamespace(PPOCRv6Engine=lambda **kwargs: kwargs)) as load:
+            cpu, gpu = get_engine("ocr", device="cpu"), get_engine("ocr", device="gpu:0")
+            self.assertFalse(cpu["options"]["enable_mkldnn"])
+            self.assertEqual(cpu["options"]["cpu_threads"], 10)
+            self.assertNotIn("enable_mkldnn", gpu["options"])
+            for profile in ("vl", "structure"):
+                with self.assertRaisesRegex(ValueError, "does not support CPU"):
+                    get_engine(profile, device="cpu")
+            self.assertEqual(load.call_count, 2)
+
     def test_cuda_loading_mode_is_applied_after_lease_before_paddle_probe(self):
         from localocr.runtime import _predict
 
@@ -122,16 +135,20 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertEqual(events, ["lease", "math", "probe", "gpu:0", "warmup", "synchronized", "engine", "restored"])
         self.assertEqual(result["cuda_module_loading"], "LAZY")
 
-    def test_explicit_cpu_never_probes_gpu_or_alters_cuda_environment(self):
+    def test_explicit_cpu_hides_gpu_without_changing_module_loading(self):
         from localocr.runtime import _predict
 
         fake_engine = SimpleNamespace(engine_name="Fake", model_name="Fake", predict_image=lambda _: {"pages": [{"blocks": []}]})
-        with patch.dict(os.environ, {"CUDA_MODULE_LOADING": "LAZY"}), \
+        def load_engine(*_args, **_kwargs):
+            self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "")
+            return fake_engine
+        with patch.dict(os.environ, {"CUDA_MODULE_LOADING": "LAZY", "CUDA_VISIBLE_DEVICES": "0"}), \
              patch("localocr.gpu_broker.verify_inherited_gpu_lease") as lease, \
-             patch("localocr.model_registry.get_engine", return_value=fake_engine):
+             patch("localocr.model_registry.get_engine", side_effect=load_engine):
             result = _predict({"device": "cpu", "profile_id": "paddleocr-vl-1.6",
                                "probe_gpu": True, "path": str(Path(__file__).parent / "samples/probe_text.png"), "tmp_dir": os.environ.get("TEMP", "/tmp")}, {}, lambda _: None)
             self.assertEqual(os.environ["CUDA_MODULE_LOADING"], "LAZY")
+            self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "")
         lease.assert_not_called()
         self.assertNotIn("cuda_module_loading", result)
 

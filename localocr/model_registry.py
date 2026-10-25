@@ -28,6 +28,7 @@ class ModelProfile:
     revision: str = ""
     artifact_paths: tuple[str, ...] = ()
     preprocessing: dict[str, Any] = field(default_factory=dict)
+    cpu_options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def _parse_profiles(content: str) -> ModelRegistry:
             revision=str(item.get("revision", "")),
             artifact_paths=tuple(str(v) for v in item.get("artifact_paths", [])),
             preprocessing=dict(item.get("preprocessing") or {}),
+            cpu_options=dict(item["cpu_options"]) if item.get("cpu_options") is not None else None,
         )
         if profile.runtime_backend not in {"paddle", "torch"}:
             raise ValueError(f"Unsupported runtime_backend: {profile.runtime_backend}")
@@ -155,10 +157,14 @@ def select_model_profile_with_route(
 
 def get_engine(model_ref: str | ModelProfile, device: str = "gpu:0"):
     profile = model_ref if isinstance(model_ref, ModelProfile) else resolve_model_reference(model_ref)
+    if device == "cpu" and profile.cpu_options is None:
+        raise ValueError(f"model profile {profile.id!r} does not support CPU")
     module_name, class_name = profile.adapter.split(":", 1)
     module = importlib.import_module(module_name)
     engine_cls = getattr(module, class_name)
     options = dict(profile.options)
+    if device == "cpu":
+        options.update(profile.cpu_options)
     # Worker-owned CUDA initialization is not a PaddleOCR constructor argument.
     options.pop("cuda_module_loading", None)
     options.pop("cuda_preload_libraries", None)

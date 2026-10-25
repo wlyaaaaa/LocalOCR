@@ -18,7 +18,7 @@ class FakeService(OCRService):
         self,
         root: Path,
         *,
-        device="cpu",
+        device="gpu:0",
         scores=None,
         empty=False,
         fail_vl=False,

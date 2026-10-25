@@ -531,6 +531,13 @@ $childExited = $null -eq $childProcess -or $childProcess.WaitForExit(8000)
         self.assertIn('[ValidateSet("auto", "ocr", "vl", "structure")]', once)
         self.assertIn('[ValidateSet("auto", "ocr", "vl", "structure")]', smart)
 
+    def test_api_wrappers_accept_device_policy(self) -> None:
+        for filename in ("ocr_once.ps1", "ocr_smart.ps1"):
+            script = (ROOT / filename).read_text(encoding="utf-8-sig")
+            self.assertIn('[ValidateSet("auto", "gpu", "cpu")]', script)
+            self.assertIn('[string]$Device = "auto"', script)
+            self.assertIn("device = $Device", script)
+
 
 if __name__ == "__main__":
     unittest.main()

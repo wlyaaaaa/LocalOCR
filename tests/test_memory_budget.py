@@ -5,11 +5,9 @@ from localocr.memory_budget import host_memory_bytes
 from localocr.runtime import ExecutionError, InferenceRuntime
 class MemoryBudgetTests(unittest.TestCase):
     def test_wsl_host_fields_are_kib_and_bridge_is_bounded(self):
-        with patch("localocr.memory_budget.sys.platform", "linux"), patch("localocr.memory_budget.platform.release", return_value="microsoft-standard-WSL2"), patch("localocr.memory_budget.subprocess.run") as run:
-            run.return_value = SimpleNamespace(stdout='{"total":64000000,"available":8000000}')
+        with patch("localocr.memory_budget.sys.platform", "linux"), patch("localocr.memory_budget.platform.release", return_value="microsoft-standard-WSL2"), patch("localocr.memory_budget._probe_host_memory", return_value=(64000000 * 1024, 8000000 * 1024)) as probe:
             self.assertEqual(host_memory_bytes(), (64000000 * 1024, 8000000 * 1024))
-            self.assertEqual((run.call_args.args[0][0], run.call_args.args[0][3]), ("powershell.exe", "-NonInteractive"))
-            self.assertEqual(run.call_args.kwargs["timeout"], 8)
+            probe.assert_called_once_with(8)
     def test_host_check_rejects_before_model_and_preserves_cancel_deadline(self):
         gib = 1024**3
         for sample, configured, code, starts in (

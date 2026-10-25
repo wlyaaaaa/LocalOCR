@@ -76,6 +76,8 @@ def _predict(
     # before a probe, model import, model load, or inference in this process.
     device = payload["device"]
     uses_gpu = device.lower().startswith(("gpu", "cuda"))
+    if device == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     from .model_registry import ModelProfile, get_engine, resolve_model_reference
 
     profile = ModelProfile(**payload["model_profile"]) if payload.get("model_profile") else resolve_model_reference(payload["profile_id"])
@@ -250,6 +252,7 @@ class InferenceRuntime:
         self._connection: Connection | None = None
         self.profile_id: str | None = None
         self.profile_revision: str | None = None
+        self.device: str | None = None
         self.loaded = False
         self.generation: str | None = None
         self.peak_memory_bytes = 0
@@ -260,9 +263,9 @@ class InferenceRuntime:
         process = self._process
         return process.pid if process is not None and process.is_alive() else None
 
-    def _start(self, profile_id: str, revision: str | None = None) -> None:
+    def _start(self, profile_id: str, revision: str | None = None, device: str = "gpu:0") -> None:
         with self._state_lock:
-            if self.pid is not None and self.profile_id == profile_id and self.profile_revision == revision:
+            if self.pid is not None and (self.profile_id, self.profile_revision, self.device) == (profile_id, revision, device):
                 return
             self.close()
             connection, child_connection = self._context.Pipe()
@@ -282,6 +285,7 @@ class InferenceRuntime:
             self._connection = connection
             self.profile_id = profile_id
             self.profile_revision = revision
+            self.device = device
             self.generation = uuid.uuid4().hex
             self.loaded = False
 
@@ -305,6 +309,7 @@ class InferenceRuntime:
         check_lease: Callable[[], None],
         progress: Callable[[dict], None],
     ) -> dict:
+        payload = {"device": "gpu:0", **payload}
         if not self._call_lock.acquire(blocking=False):
             raise ExecutionError(
                 "localocr_busy", "Inference is already running.", http_status=409
@@ -339,10 +344,10 @@ class InferenceRuntime:
                     )
 
             check_execution()
-            if self.pid is not None and (self.profile_id, self.profile_revision) != (payload["profile_id"], payload.get("profile_revision")): self.close()
+            if self.pid is not None and (self.profile_id, self.profile_revision, self.device) != (payload["profile_id"], payload.get("profile_revision"), payload["device"]): self.close()
             check_host()
             host_checked = time.monotonic()
-            self._start(payload["profile_id"], payload.get("profile_revision"))
+            self._start(payload["profile_id"], payload.get("profile_revision"), payload["device"])
             connection = self._connection
             process = self._process
             assert connection is not None and process is not None
@@ -427,6 +432,7 @@ class InferenceRuntime:
             process, connection = self._process, self._connection
             self._process, self._connection = None, None
             self.profile_id, self.generation, self.loaded = None, None, False
+            self.profile_revision, self.device = None, None
             if process is not None:
                 if os.name == "posix":
                     try:

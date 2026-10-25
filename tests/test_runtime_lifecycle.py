@@ -346,6 +346,15 @@ class RuntimeLifecycleTest(unittest.TestCase):
             self.assertNotEqual(first["worker_pid"], second["worker_pid"])
             self.assertFalse(_pid_alive(first["worker_pid"]))
 
+    def test_same_model_device_change_replaces_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, runtime = Path(tmp), self._runtime()
+            first = self._predict(runtime, self._payload(root, profile_id="profile-a"))
+            second = self._predict(runtime, self._payload(root, profile_id="profile-a", device="gpu:0"))
+            self.assertNotEqual(first["worker_pid"], second["worker_pid"])
+            self.assertFalse(_pid_alive(first["worker_pid"]))
+            self.assertEqual(runtime.device, "gpu:0")
+
     def test_timeout_kills_full_worker_tree_and_next_request_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -554,7 +563,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
 
             runtime = InferenceRuntime(predictor=service_predictor, host_memory_provider=fake_host_memory)
             service = OCRService(
-                device="cpu",
+                device="gpu:0",
                 tmp_dir=root / "tmp",
                 job_dir=root / "jobs",
                 probe_on_start=False,
@@ -607,7 +616,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
 
             runtime = InferenceRuntime(predictor=service_predictor, host_memory_provider=fake_host_memory)
             service = OCRService(
-                device="cpu",
+                device="gpu:0",
                 tmp_dir=root / "tmp",
                 job_dir=root / "jobs",
                 probe_on_start=False,
@@ -634,14 +643,15 @@ class RuntimeLifecycleTest(unittest.TestCase):
             self.assertEqual(outcome["error"].code, "gpu_lease_lost")
             self.assertTrue(leases and leases[0].entered and leases[0].exited)
 
-            # The next request receives a fresh lease after the broker recovers.
+            # A requested CPU route can proceed without touching the lost lease.
             lost.clear()
             response = service.process_inputs(
-                [success_source], engine_choice="ocr", write_files=False, timeout_sec=5.0
+                [success_source], engine_choice="ocr", device="cpu", write_files=False, timeout_sec=5.0
             )
             self.assertTrue(response["ok"])
             self.assertEqual(response["results"][0]["engine"], "lifecycle-fake")
             self.assertEqual(service.loaded_models, ["ppocrv6-medium"])
+            self.assertEqual(len(leases), 1)
 
 
 if __name__ == "__main__":
