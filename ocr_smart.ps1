@@ -5,6 +5,8 @@ param(
 
     [ValidateSet("auto", "ocr", "vl", "structure")]
     [string]$Engine = "auto",
+    [ValidateSet("auto", "gpu", "cpu")]
+    [string]$Device = "auto",
     [string]$Model,
 
     [switch]$Recursive,
@@ -290,6 +292,7 @@ function Add-SmartMetadata {
     )
     $Payload | Add-Member -NotePropertyName smart -NotePropertyValue ([pscustomobject]@{
             requested_engine = $Engine
+            requested_device = $Device
             requested_model = $Model
             preview_effective_engine = $Route.effective_engine
             preview_route_reason = $Route.reason
@@ -389,6 +392,7 @@ if ($TriageOnly) {
         ok = $true
         status = "triage_only"
         requested_engine = $Engine
+        requested_device = $Device
         requested_model = $Model
         effective_engine = $route.effective_engine
         route_reason = $route.reason
@@ -433,7 +437,7 @@ if (($activity.state -eq "unknown") -and (-not $Force)) {
 $ocrOnce = Join-Path $ScriptDir "ocr_once.ps1"
 if (-not $Path.StartsWith('/')) { $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path) }
 if ($OutDir -and -not $OutDir.StartsWith('/')) { $OutDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir) }
-$childInvocation = "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $Engine) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -ExecutionTimeoutSec $ExecutionTimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
+$childInvocation = "& $(Quote-PowerShellString $ocrOnce) $(Quote-PowerShellString $Path) -Engine $(Quote-PowerShellString $Engine) -Device $(Quote-PowerShellString $Device) -Port $Port -HostAddress $(Quote-PowerShellString $HostAddress) -TimeoutSec $TimeoutSec -ExecutionTimeoutSec $ExecutionTimeoutSec -StartupTimeoutSec $StartupTimeoutSec"
 if ($Model) {
     $childInvocation += " -Model $(Quote-PowerShellString $Model)"
 }
@@ -468,6 +472,7 @@ if ($client.timed_out) {
         error_code = "client_timeout"
         recommendation = "do_not_blindly_retry"
         requested_engine = $Engine
+        requested_device = $Device
         requested_model = $Model
         effective_engine = $route.effective_engine
         route_reason = $route.reason
@@ -505,6 +510,7 @@ $failure = [pscustomobject]@{
     error_code = "client_failed"
     recommendation = "inspect_stderr_and_health"
     requested_engine = $Engine
+    requested_device = $Device
     requested_model = $Model
     effective_engine = $route.effective_engine
     route_reason = $route.reason

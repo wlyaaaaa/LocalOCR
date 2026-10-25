@@ -117,7 +117,7 @@ def annotate_result(
     coverage = _coverage(result, pages, source_info)
     observations = _observations(pages)
     text_blocks = _text_blocks(pages)
-    quality_flags: list[str] = []
+    quality_flags: list[str] = list(result.get("additional_quality_flags") or [])
     uncertainty: list[str] = []
 
     if source_info["unsupported"]:

@@ -32,6 +32,7 @@ from .runtime import DEFAULT_TIMEOUT_SEC, MAX_TIMEOUT_SEC, ExecutionError
 class OCRPathRequest(BaseModel):
     path: str = Field(..., description="Windows or WSL path to image/PDF/folder")
     engine: Literal["auto", "ocr", "vl", "structure"] = "auto"
+    device: Literal["auto", "gpu", "cpu"] = "auto"
     model: str | None = Field(None, description="Concrete model profile id; optional")
     recursive: bool = False
     out_dir: str | None = None
@@ -113,6 +114,7 @@ def health() -> dict:
     service = get_service()
     active = service.active_jobs
     failure = service.terminal_persistence_failure
+    vl_runtime = getattr(service, "_vl_runtime", service._runtime)
     return {
         "ok": failure is None,
         "service": "localocr",
@@ -128,7 +130,9 @@ def health() -> dict:
         "active_jobs": active,
         "active_jobs_count": len(active),
         "worker_pid": service._runtime.pid,
-        "service_memory_peak_bytes": service._runtime.peak_memory_bytes,
+        "vl_worker_pid": vl_runtime.pid,
+        "worker_device": getattr(service._runtime, "device", None),
+        "service_memory_peak_bytes": max(service._runtime.peak_memory_bytes, vl_runtime.peak_memory_bytes),
         "service_memory_limit_bytes": service._runtime.memory_limit_bytes,
     }
 
@@ -171,6 +175,7 @@ def ocr_path(req: OCRPathRequest):
         result = service.process_inputs(
             [path],
             engine_choice=req.engine,
+            device=req.device,
             model_choice=req.model,
             recursive=req.recursive,
             out_dir=out_dir,
@@ -231,6 +236,7 @@ def _error_response(exc: Exception) -> JSONResponse:
 async def ocr_file(
     file: Annotated[UploadFile, File()],
     engine: Literal["auto", "ocr", "vl", "structure"] = "auto",
+    device: Literal["auto", "gpu", "cpu"] = "auto",
     model: str | None = None,
     write_outputs: bool = True,
     timeout_sec: float = Query(DEFAULT_TIMEOUT_SEC, gt=0, le=MAX_TIMEOUT_SEC),
@@ -246,6 +252,7 @@ async def ocr_file(
                 service.process_inputs,
                 [target],
                 engine_choice=engine,
+                device=device,
                 model_choice=model,
                 recursive=False,
                 out_dir=Path("outputs/api_uploads"),

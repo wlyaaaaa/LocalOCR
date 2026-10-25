@@ -8,14 +8,15 @@ import shutil
 import tempfile
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .difficulty import POLICY_VERSION as DIFFICULTY_POLICY_VERSION
 from .difficulty import OCRDifficultyAssessment, assess_ocr_difficulty, assess_ocr_pages
-from .gpu_broker import GpuBrokerLease
+from .gpu_broker import GpuBrokerConflict, GpuBrokerError, GpuBrokerLease, GpuBrokerLeaseLost
+from .memory_budget import close_host_memory_probe
 from .job_registry import JobClaim, JobRegistry
 from .model_registry import (
     ModelProfile,
@@ -46,7 +47,7 @@ OUTPUT_PROJECTION_VERSION = "display-summary-v1"
 
 
 class OCRService:
-    """Lightweight coordinator: one in-flight task and one replaceable warm worker."""
+    """One in-flight task with separate warm main and VL workers."""
 
     def __init__(
         self,
@@ -58,8 +59,9 @@ class OCRService:
         isolated_timeout_sec: float = DEFAULT_TIMEOUT_SEC,
         gpu_lease_factory: Callable[[str], Any] | None = None,
         runtime: InferenceRuntime | None = None,
+        vl_runtime: InferenceRuntime | None = None,
     ) -> None:
-        self.device = device
+        self.device = _normalized_device(device)
         self.project_root = Path(os.environ.get("LOCALOCR_PROJECT_ROOT") or Path(__file__).resolve().parent.parent)
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -69,12 +71,9 @@ class OCRService:
         )
         self.job_registry.recover_abandoned()
         self._runtime = runtime or InferenceRuntime()
+        self._vl_runtime = vl_runtime if vl_runtime is not None else (runtime if runtime is not None else InferenceRuntime())
         self._probe_gpu = probe_on_start
-        self._gpu_lease_factory = gpu_lease_factory or (
-            GpuBrokerLease
-            if device.lower().startswith(("gpu", "cuda"))
-            else lambda _owner: nullcontext()
-        )
+        self._gpu_lease_factory = gpu_lease_factory or GpuBrokerLease
         self._execution_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._active: dict[str, Any] | None = None
@@ -84,15 +83,13 @@ class OCRService:
 
     @property
     def gpu_summary(self) -> str | None:
-        return self._runtime.gpu_summary
+        return self._runtime.gpu_summary or self._vl_runtime.gpu_summary
 
     @property
     def loaded_models(self) -> list[str]:
-        return (
-            [self._runtime.profile_id]
-            if self._runtime.pid and self._runtime.loaded
-            else []
-        )
+        runtimes = (self._runtime,) if self._vl_runtime is self._runtime else (self._runtime, self._vl_runtime)
+        return [runtime.profile_id for runtime in runtimes
+                if runtime.pid and runtime.loaded]
 
     @property
     def loaded_engines(self) -> list[str]:
@@ -139,7 +136,17 @@ class OCRService:
             self._closed = True
             if self._execution is not None:
                 self._execution["cancel"].set()
-        self._runtime.close()
+        try:
+            self._close_runtimes()
+        finally:
+            close_host_memory_probe()
+
+    def _close_runtimes(self) -> None:
+        try:
+            self._runtime.close()
+        finally:
+            if self._vl_runtime is not self._runtime:
+                self._vl_runtime.close()
 
     def _busy_response(self, results: list[dict] | None = None) -> dict:
         active = self.active_jobs
@@ -224,7 +231,7 @@ class OCRService:
             "model_profile": asdict(profile),
             "profile_revision": context["identities"][profile.id],
             "page_indices": context.get("page_indices"),
-            "device": self.device,
+            "device": context["device"],
             "tmp_dir": str(context["scratch"] / "pages"),
             "probe_gpu": self._probe_gpu,
             "source_sha256": context["source_sha256"],
@@ -232,7 +239,8 @@ class OCRService:
             "lease": getattr(lease, "worker_binding", None),
         }
         try:
-            return self._runtime.predict(
+            runtime = self._vl_runtime if profile.engine == "vl" else self._runtime
+            return runtime.predict(
                 payload, deadline=context["deadline"], cancel=context["cancel"],
                 check_lease=self._checkpoint, progress=self._progress,
             )
@@ -313,7 +321,13 @@ class OCRService:
         write_files: bool = True,
         caller_binding: dict[str, Any] | None = None,
         timeout_sec: float | None = None,
+        device: str = "auto",
     ) -> dict[str, Any]:
+        if device not in {"auto", "gpu", "cpu"}:
+            raise ValueError("device must be auto, gpu or cpu")
+        policy = "cpu" if self.device == "cpu" else device
+        actual_device = "cpu" if policy == "cpu" else self.device
+        device_reason = "requested" if policy != "auto" else "gpu_available"
         timeout = self.isolated_timeout_sec if timeout_sec is None else timeout_sec
         if (
             isinstance(timeout, bool)
@@ -353,22 +367,34 @@ class OCRService:
             profile, route = select_model_profile_with_route(
                 source, engine_choice=engine_choice, model_choice=model_choice, registry=registry
             )
+            if actual_device == "cpu" and profile.cpu_options is None:
+                raise ValueError(f"Model profile {profile.id} does not support CPU")
             profiles = {profile.id: profile}
             if engine_choice == "auto" and model_choice is None:
                 fallback = resolve_model_reference("vl", registry)
                 profiles[fallback.id] = fallback
             identities = {key: execution_sha256(value) for key, value in profiles.items()}
 
-            try:
-                request = self.job_registry.build_request(
+            def build_request(target_device):
+                return self.job_registry.build_request(
                     source,
                     profile,
                     output_dir,
                     request_variant=_request_variant(
-                        engine_choice, model_choice, caller_binding, device=self.device,
+                        engine_choice, model_choice, caller_binding, device=target_device,
                         fallback_identity=identities.get(registry.defaults["vl"]),
                     ),
                 )
+            try:
+                request = build_request(actual_device)
+                cached = None
+                if write_files:
+                    candidates = ([build_request(self.device), request]
+                                  if policy == "auto" and actual_device == "cpu" else [request])
+                    for candidate in candidates:
+                        cached = self.job_registry.cached_response(candidate)
+                        if cached is not None:
+                            break
             except (OSError, ValueError) as exc:
                 exc.localocr_context = {
                     "results": results,
@@ -378,16 +404,30 @@ class OCRService:
                     "skipped_inputs": skipped_inputs,
                 }
                 raise
-            if write_files:
-                cached = self.job_registry.cached_response(request)
-                if cached is not None:
-                    results.append(cached)
-                    continue
+            if cached is not None:
+                results.append(cached)
+                continue
             if not self._execution_lock.acquire(blocking=False):
                 return self._busy_response(results)
             claim: JobClaim | None = None
             release_claim = False
+            lease_scope = ExitStack()
             try:
+                lease = None
+                if actual_device != "cpu":
+                    try:
+                        lease = lease_scope.enter_context(self._gpu_lease_factory("localocr"))
+                    except GpuBrokerError as exc:
+                        if policy != "auto" or isinstance(exc, GpuBrokerLeaseLost) or profile.cpu_options is None:
+                            raise
+                        actual_device = "cpu"
+                        device_reason = f"gpu_busy:{exc.owner}" if isinstance(exc, GpuBrokerConflict) else "gpu_broker_unavailable"
+                        request = build_request(actual_device)
+                        if write_files:
+                            cached = self.job_registry.cached_response(request)
+                            if cached is not None:
+                                results.append(cached)
+                                continue
                 claim = self.job_registry.try_claim(request) if write_files else None
                 if claim is not None and claim.kind == "cache_hit":
                     results.append(dict(claim.response or {}))
@@ -410,6 +450,7 @@ class OCRService:
                         "deadline": request_deadline,
                         "thread_id": threading.get_ident(),
                         "lease": None,
+                        "device": actual_device,
                     }
                     self._active = {
                         "job_id": request.job_id,
@@ -430,9 +471,10 @@ class OCRService:
                 initial: dict | None = None
                 initial_profile = profile
                 route_dict = route.to_dict()
+                route_dict.update(device=actual_device, device_reason=device_reason)
                 try:
                     self._progress({"stage": "acquiring_gpu"})
-                    with self._gpu_lease_factory("localocr") as lease:
+                    with lease_scope:
                         self._execution["lease"] = lease
                         with tempfile.TemporaryDirectory(
                             prefix=f"{request.job_id}-", dir=self.tmp_dir
@@ -486,6 +528,9 @@ class OCRService:
                                     route_dict["signals"] = list(
                                         route_dict.get("signals") or []
                                     ) + ["ocr_no_text_confirmed"]
+                                elif escalate_indices and actual_device == "cpu":
+                                    route_dict["escalation_skipped"] = {"reason": "gpu_unavailable", "page_indices": escalate_indices}
+                                    result["additional_quality_flags"] = ["escalation_skipped_gpu_unavailable"]
                                 elif escalate_indices:
                                     profile = fallback
                                     route_dict = _escalated_route(
@@ -509,6 +554,7 @@ class OCRService:
                                     http_status=409,
                                 )
                             result["execution_identities"] = identities
+                            result["device"] = actual_device
                             result["route"] = route_dict
                             result = self._annotate(
                                 result,
@@ -536,7 +582,7 @@ class OCRService:
                         )
                     results.append(result)
                 except BaseException as exc:
-                    self._runtime.close()
+                    self._close_runtimes()
                     partial_outputs = None
                     worker_partial = exc.context.pop("partial_result", None) if isinstance(exc, ExecutionError) else None
                     if initial is None and worker_partial is not None:
@@ -627,13 +673,30 @@ class OCRService:
                             "skipped_inputs": skipped_inputs,
                         }
                     raise
+            except BaseException as exc:
+                if claim is None:
+                    self._close_runtimes()
+                    exc.localocr_context = {
+                        "results": results, "completed_count": len(results),
+                        "failed_input": str(source), "skipped_inputs": skipped_inputs,
+                        "unprocessed_inputs": [str(p) for p in files[len(results)+1:]],
+                    }
+                raise
             finally:
-                if release_claim:
-                    self.job_registry.release(claim)
-                with self._state_lock:
-                    self._active = None
-                    self._execution = None
-                self._execution_lock.release()
+                try:
+                    lease_scope.close()
+                except BaseException:
+                    self._close_runtimes()
+                    raise
+                finally:
+                    try:
+                        if release_claim:
+                            self.job_registry.release(claim)
+                    finally:
+                        with self._state_lock:
+                            self._active = None
+                            self._execution = None
+                        self._execution_lock.release()
         return {
             "ok": True,
             "batch_coverage": "partial" if skipped_inputs else "complete",

@@ -1,10 +1,12 @@
-# Call the LocalOCR local API once. Starts the server if needed.
+﻿# Call the LocalOCR local API once. Starts the server if needed.
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Path,
 
     [ValidateSet("auto", "ocr", "vl", "structure")]
     [string]$Engine = "auto",
+    [ValidateSet("auto", "gpu", "cpu")]
+    [string]$Device = "auto",
     [string]$Model,
 
     [switch]$Recursive,
@@ -307,6 +309,7 @@ try {
     $body = [ordered]@{
         path = $Path
         engine = $Engine
+        device = $Device
         recursive = [bool]$Recursive
         write_outputs = $true
         timeout_sec = $ExecutionTimeoutSec

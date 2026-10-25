@@ -35,7 +35,7 @@ pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
 ## 4. 显存不足
 
 显存与系统内存分别观察；32GB 显存也不能保证任意长文档不溢出。
-服务只保留一个模型 worker，换模型先回收旧 worker；重型任务由 LocalGpuBroker 排他。
+服务保留 OCR/Structure 主槽及独立 VL 温热槽，同槽换模型或设备先回收旧 worker；GPU 推理由 LocalGpuBroker 排他。
 服务进程树 RSS 超过 30GB 会返回 `memory_limit_exceeded` 并终止该推理，不要求整机其他程序也低于 30GB。
 不要为绕过限制关掉 broker、批量降画质或杀其他服务；按真实任务的分页和分辨率需求做有界调整。
 
@@ -47,6 +47,11 @@ pip install beautifulsoup4 einops ftfy Jinja2 latex2mathml lxml openpyxl \
 ## 6. PaddleOCR 报 oneDNN / PIR 错误
 
 设置 `export PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0`（已在 run_in_wsl.sh 配好）。
+CPU 推理启用 oneDNN 会报 `ConvertPirAttribute2RuntimeAttribute not support`，所以 OCR profile 的
+CPU 参数明确设置 `enable_mkldnn=False`、`cpu_threads=10`；不要为提速重新打开 oneDNN。
+`-Device auto` 在显卡被占或 broker 不可用时将本次剩余 OCR 文件改用 CPU，约 10 秒/帧；
+也可用 `-Device cpu` 直接选择。CPU 不占显存，VL/Structure 不支持 CPU；auto 的问题页会跳过 VL
+升级并留下 `escalation_skipped_gpu_unavailable` 质量警告，读取结果时需对照原图。
 
 平面截图文字被裁切/错读而自动升级时，检查普通 OCR 的 `use_doc_unwarping` 是否被改回 `true`。
 UVDoc 是纸张形变矫正，不是截图锐化；现行普通 OCR 默认关闭，方向和文本行旋转能力仍保留。

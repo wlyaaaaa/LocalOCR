@@ -182,6 +182,8 @@ def build_display_summary(result: dict[str, Any]) -> dict[str, Any]:
         message = f"识别完成：已验证未检测到文字；覆盖{coverage_label}；质量{quality_label}。"
     else:
         message = "未提取到可确认文字，但当前证据不足以判断图片确实无文字。"
+    if "escalation_skipped_gpu_unavailable" in warnings:
+        message += "需要升级的页因显卡被占用未升级。"
 
     return {
         "status": outcome,

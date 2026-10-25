@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
 from typing import Callable
+from functools import lru_cache
 
 
 class GpuBrokerError(RuntimeError):
@@ -100,11 +102,43 @@ try {{
     return send
 
 
+@lru_cache(maxsize=1)
+def _windows_curl() -> str | None:
+    return shutil.which("curl.exe") or (
+        "/mnt/c/Windows/System32/curl.exe"
+        if os.path.isfile("/mnt/c/Windows/System32/curl.exe") else None
+    )
+
+
+def _curl_transport(base_url: str, executable: str) -> Transport:
+    def send(action: str, payload: dict) -> dict:
+        try:
+            completed = subprocess.run(
+                [executable, "-sS", "--noproxy", "*", "--max-time", "10",
+                 "-H", "Content-Type: application/json; charset=utf-8",
+                 "--data-binary", "@-", "-w", "\n%{http_code}",
+                 f"{base_url}/_gpu_broker/{action}"],
+                input=json.dumps(payload).encode("utf-8"), capture_output=True,
+                check=False, timeout=20,
+            )
+            if completed.returncode:
+                reason = completed.stderr.decode("utf-8", errors="replace").strip()[:200]
+                raise GpuBrokerError(f"GPU broker curl failed ({completed.returncode}): {reason}")
+            body, status = completed.stdout.decode("utf-8").rsplit("\n", 1)
+            if not status.strip().isdigit():
+                raise ValueError("missing HTTP status")
+            return json.loads(body)
+        except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError) as exc:
+            raise GpuBrokerError(f"Invalid GPU broker curl response: {type(exc).__name__}") from exc
+    return send
+
+
 def default_transport(base_url: str) -> Transport:
     if os.environ.get("WSL_INTEROP") or os.path.exists(
         "/proc/sys/fs/binfmt_misc/WSLInterop"
     ):
-        return _powershell_transport(base_url)
+        executable = _windows_curl()
+        return _curl_transport(base_url, executable) if executable else _powershell_transport(base_url)
     return _urllib_transport(base_url)
 
 

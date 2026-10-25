@@ -132,6 +132,18 @@ class FakeLocalOcr:
 
 @unittest.skipUnless(os.name == "nt", "Run Windows HTTP wrapper tests natively so client and test server share loopback")
 class WindowsWrapperBehaviorTest(unittest.TestCase):
+    def test_wrappers_pass_requested_device(self):
+        for script in ("ocr_once.ps1", "ocr_smart.ps1"):
+            for device in (None, "gpu", "cpu"):
+                with self.subTest(script=script, device=device), FakeLocalOcr() as fake:
+                    args = ["-Device", device] if device else []
+                    completed = self._run_wrapper(script, r"C:\synthetic\sample.png", "-Port", str(fake.port), *args)
+                    payload = self._payload(completed)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(fake.post_bodies[0]["device"], device or "auto")
+                    if script == "ocr_smart.ps1":
+                        self.assertEqual(payload["smart"]["requested_device"], device or "auto")
+
     def test_all_entrypoints_reject_remote_hosts_before_work(self):
         for script in ("ocr_once.ps1", "ocr_smart.ps1", "start_server.ps1", "stop_server.ps1"):
             with self.subTest(script=script):
