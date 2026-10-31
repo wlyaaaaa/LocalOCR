@@ -64,6 +64,22 @@ bash scripts/run_in_wsl.sh scripts/manage_runtime.py rollback
 
 回滚由 previous 版本自己的源码和解释器验证自己的回执；缺失、失败或过期均拒绝切换。旧环境存在但测试未通过，不能称为有效回滚。保留原环境与失败证据，修复后重新验证，不能伪造通过回执或关闭检查。
 
+## 退休环境清理
+
+成功激活后只保留 current、previous 两代已激活环境。原 previous 的目录身份和验收证据先原子写入运行根目录的 `.retirements.json`，切换完成后尝试清理；从未激活的候选不会自动加入。回滚目标仍受 current/previous 保护。清理失败会记录原因并留待下一次激活或显式重试，激活回执仍如实报告已切换。
+
+既有旧版本由操作者核实曾经激活后，可显式收养并成组清理。用 current 的解释器直接执行开发副本脚本，即可使用新入口，不必改动冻结源码或重跑 GPU 验收：
+
+```bash
+/root/localocr-runtimes/current/bin/python -P /absolute/development/scripts/manage_runtime.py \
+  retire --runtime-root /root/localocr-runtimes --adopt <old-release-a> --adopt <old-release-b>
+# 重试已登记的退休项，不再收养候选：
+/root/localocr-runtimes/current/bin/python -P /absolute/development/scripts/manage_runtime.py \
+  retire --runtime-root /root/localocr-runtimes
+```
+
+运行前先用现有停止入口停服务；设置 `LOCALOCR_PROJECT_ROOT` 指向现有项目数据目录，以核对未结束的作业。每个目标均重新核对 current/previous、目录设备号和 inode、venv 配置、源码快照及匹配的通过回执，并检查 Linux `/proc` 的解释器、工作目录、参数、环境、映射及文件句柄。服务、作业或进程占用、链接、越界和同名目录替换均保留并说明原因。删除中途失败时按已登记的目录身份重试，允许已删除的证明文件缺失。清单和锁仅为短命令使用，不新增后台任务。硬链接只移除相应目录项；仍被其他版本引用的数据块保留，不按目录大小承诺磁盘回收量。
+
 ## 换模型的最小变更
 
 同家族且接口兼容：新增 profile、实际权重目录和版本，再跑上述流程，通常不必改服务/CLI/Skill。新框架：增加明确 adapter，声明 backend 和真实输出能力，隔离安装；缺分数、几何或表格结构就保留缺失，不伪造字段。当前 default 为 OCR、VL、Structure 三条路线，新增候选不会自动晋升。

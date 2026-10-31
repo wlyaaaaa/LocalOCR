@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import shutil
+import stat
 from pathlib import Path
 import subprocess
 import sys
@@ -97,6 +98,127 @@ def atomic_link(path: Path, target: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def retirement_file(root: Path) -> Path:
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError('Runtime root must be a real directory')
+    return root / '.retirements.json'
+
+
+def save_retirements(root: Path, entries: dict) -> None:
+    path = retirement_file(root)
+    temporary = path.with_name(path.name + f'.{os.getpid()}.tmp')
+    try:
+        with temporary.open('x', encoding='utf-8') as stream:
+            json.dump(entries, stream, indent=2); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load_retirements(root: Path) -> dict:
+    path = retirement_file(root)
+    if path.is_symlink(): raise RuntimeError('Retirement ledger must not be a symlink')
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+
+
+def protected_runtimes(root: Path) -> set[Path]:
+    protected = {Path(sys.prefix).resolve()}
+    for name in ('current', 'previous'):
+        link = root / name
+        if link.is_symlink(): protected.add(link.resolve(strict=True))
+        elif link.exists(): raise RuntimeError(f'{name} must be a symlink')
+    return protected
+
+
+def retirement_identity(root: Path, name: str, expected: dict | None = None) -> dict:
+    if name in ('', '.', '..', 'current', 'previous') or Path(name).name != name or '/' in name or '\\' in name:
+        raise RuntimeError('Retirement requires a direct runtime directory name')
+    target = root / name
+    info = target.lstat()
+    if not stat.S_ISDIR(info.st_mode) or target.resolve().parent != root.resolve():
+        raise RuntimeError('Retirement target must be a real direct child directory')
+    identity = {'dev': info.st_dev, 'ino': info.st_ino}
+    if expected and any(identity[key] != expected[key] for key in identity):
+        raise RuntimeError('Retirement directory identity changed')
+    proofs = ('pyvenv.cfg', 'app/snapshot.json', 'acceptance/acceptance.json')
+    hashes = {}
+    for relative in proofs:
+        path = target / relative
+        if any(part.is_symlink() for part in (path, path.parent)):
+            raise RuntimeError('Retirement proof must not be a symlink')
+        if expected and expected.get('deleting') and not path.exists(): continue
+        hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if expected and hashes[relative] != expected['proofs'][relative]:
+            raise RuntimeError('Retirement proof identity changed')
+    if not (expected and expected.get('deleting')):
+        snapshot = json.loads((target / proofs[1]).read_text(encoding='utf-8'))
+        receipt = json.loads((target / proofs[2]).read_text(encoding='utf-8'))
+        if (snapshot.get('schema') != 'localocr.source-snapshot.v1' or not snapshot.get('files')
+                or receipt.get('schema') != 'localocr.runtime-acceptance.v1' or receipt.get('ok') is not True
+                or receipt.get('python_prefix') != str(target.resolve())
+                or receipt.get('source_root') != str(target.resolve() / 'app')
+                or 'home' not in (target / proofs[0]).read_text(encoding='utf-8')):
+            raise RuntimeError('Retirement requires matching venv, source snapshot and passing acceptance')
+    return {**identity, 'proofs': hashes}
+
+
+def enroll_retirements(root: Path, names: list[str]) -> None:
+    entries = load_retirements(root)
+    for name in names:
+        identity = retirement_identity(root, name, entries.get(name))
+        if (root / name).resolve() in protected_runtimes(root):
+            raise RuntimeError('Cannot enroll current, previous or the running interpreter')
+        if name not in entries: entries[name] = identity
+    save_retirements(root, entries)
+
+
+def ensure_retirement_idle(target: Path) -> None:
+    ensure_stopped()
+    project = Path(os.environ.get('LOCALOCR_PROJECT_ROOT') or ROOT)
+    for manifest in (project / '_server/jobs').glob('*.json'):
+        if json.loads(manifest.read_text(encoding='utf-8')).get('status') in ('running', 'queued', 'cancelling'):
+            raise RuntimeError('An unfinished LocalOCR job remains')
+    proc = Path('/proc')
+    if not proc.is_dir(): raise RuntimeError('Retirement process inspection requires Linux /proc')
+    needle = str(target).encode()
+    for process in proc.iterdir():
+        if not process.name.isdigit(): continue
+        try:
+            data = b'\0'.join((process / name).read_bytes() for name in ('cmdline', 'environ', 'maps'))
+            links = [process / 'exe', process / 'cwd', *list((process / 'fd').iterdir())]
+            if needle in data or any(Path(os.readlink(link)).is_relative_to(target) for link in links):
+                raise RuntimeError(f'Runtime is in use by process {process.name}')
+        except (FileNotFoundError, ProcessLookupError): continue
+
+
+def retire(runtime_root: Path, adopt: list[str] = ()) -> dict:
+    root = runtime_root.absolute()
+    retirement_file(root)
+    root = root.resolve()
+    if adopt: enroll_retirements(root, adopt)
+    entries = load_retirements(root); deleted = []
+    for name, entry in list(entries.items()):
+        try:
+            target = root / name
+            # Validate the stored name before even treating a missing path as completed.
+            if Path(name).name != name or name in ('', '.', '..', 'current', 'previous') or '/' in name or '\\' in name:
+                raise RuntimeError('Invalid retirement name')
+            if target.resolve() in protected_runtimes(root): raise RuntimeError('Runtime is protected')
+            if target.exists() or target.is_symlink():
+                retirement_identity(root, name, entry)
+                ensure_retirement_idle(target)
+                if target.resolve() in protected_runtimes(root): raise RuntimeError('Runtime became protected')
+                retirement_identity(root, name, entry)
+                entry['deleting'] = True
+                save_retirements(root, entries)  # A partially removed tree remains retryable by dev/inode.
+                shutil.rmtree(target)
+            del entries[name]; deleted.append(name)
+        except Exception as exc:
+            entry['reason'] = f'{type(exc).__name__}: {exc}'
+        save_retirements(root, entries)
+    return {'deleted': deleted, 'pending': entries}
+
+
 def validate(directory: Path, allow_heavy: bool) -> int:
     if not allow_heavy: raise ValueError('validate requires --allow-heavy')
     directory.mkdir(parents=True, exist_ok=True)
@@ -136,33 +258,61 @@ def activate(runtime_root: Path, receipt: Path) -> None:
     ensure_stopped()
     current, previous = runtime_root / 'current', runtime_root / 'previous'
     old = current.resolve(strict=True) if current.is_symlink() else None
+    retiring = previous.resolve(strict=True) if previous.is_symlink() else None
+    if old != target and retiring and retiring not in (old, target):
+        # It is still previous here, so enroll with its proven activation history.
+        entries = load_retirements(runtime_root)
+        if retiring.parent != runtime_root.resolve(): raise RuntimeError('Previous runtime is outside runtime root')
+        entries.setdefault(retiring.name, retirement_identity(runtime_root, retiring.name))
+        save_retirements(runtime_root, entries)
     if old is not None and old != target: atomic_link(previous, old)
     atomic_link(current, target)
-    print(json.dumps({'active': str(current.resolve(strict=True)), 'previous': str(previous.resolve()) if previous.is_symlink() else None}))
+    result = {'active': str(target), 'previous': str(previous.resolve()) if previous.is_symlink() else None}
+    try: result['retirement'] = retire(runtime_root)
+    except Exception as exc: result['retirement_error'] = f'{type(exc).__name__}: {exc}'
+    print(json.dumps(result))
 
 
 def rollback(runtime_root: Path) -> None:
     previous = runtime_root / 'previous'
     if not previous.is_symlink(): raise RuntimeError('No previous runtime is registered')
     target = previous.resolve(strict=True)
+    current = runtime_root / 'current'
+    old = current.resolve(strict=True) if current.is_symlink() else None
     # The previous runtime validates its own interpreter, packages, weights and code.
-    subprocess.run([str(target / 'bin/python'), '-P', str(target / 'app/scripts/manage_runtime.py'), 'activate', '--runtime-root', str(runtime_root), '--receipt', str(target / 'acceptance/acceptance.json')], check=True, cwd=target / 'app', timeout=120)
+    try:
+        subprocess.run([str(target / 'bin/python'), '-P', str(target / 'app/scripts/manage_runtime.py'), 'activate', '--runtime-root', str(runtime_root), '--receipt', str(target / 'acceptance/acceptance.json')], check=True, cwd=target / 'app', timeout=120)
+    except subprocess.TimeoutExpired:
+        try:
+            switched = current.is_symlink() and previous.is_symlink() and current.resolve(strict=True) == target and previous.resolve(strict=True) == old
+        except (OSError, RuntimeError): switched = False
+        if not switched: raise
+        print(json.dumps({'active': str(target), 'previous': str(old), 'retirement_error': 'Rollback switched successfully; retirement timed out; retry retire'}))
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['freeze', 'inspect', 'validate', 'activate', 'rollback'])
+    parser.add_argument('action', choices=['freeze', 'inspect', 'validate', 'activate', 'rollback', 'retire'])
     parser.add_argument('--runtime-root', type=Path, default=Path('/root/localocr-runtimes'))
     parser.add_argument('--receipt', type=Path)
     parser.add_argument('--report-dir', type=Path)
     parser.add_argument('--allow-heavy', action='store_true')
+    parser.add_argument('--adopt', action='append', default=[], help='Previously activated runtime name verified by the operator; repeat to retire a group')
     args = parser.parse_args(argv)
     if args.action == 'freeze':
         print(json.dumps(freeze_source(ROOT, Path(sys.prefix).resolve() / 'app'))); return 0
     if args.action == 'inspect':
         print(json.dumps({'python_prefix': sys.prefix, 'source_root': str(ROOT), 'state': state()}, ensure_ascii=False)); return 0
     if args.action == 'validate': return validate(args.report_dir or Path(sys.prefix) / 'acceptance', args.allow_heavy)
-    if args.action == 'activate': activate(args.runtime_root, args.receipt or Path(sys.prefix) / 'acceptance/acceptance.json')
+    if args.action in ('activate', 'retire'):
+        # Serialize retirement and switching; rollback invokes activate in a child.
+        from localocr.job_registry import _exclusive_file_lock
+        with (args.runtime_root / '.runtime.guard').open('a+b') as guard, _exclusive_file_lock(guard.fileno()):
+            if args.action == 'activate': activate(args.runtime_root, args.receipt or Path(sys.prefix) / 'acceptance/acceptance.json')
+            else:
+                result = retire(args.runtime_root, args.adopt); print(json.dumps(result))
+                return 1 if result['pending'] else 0
+        return 0
     if args.action == 'rollback': rollback(args.runtime_root)
     return 0
 
