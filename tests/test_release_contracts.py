@@ -86,14 +86,27 @@ class ReleaseContractTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix', 'Linux retirement process inspection')
     def test_retirement_detects_a_real_process_using_the_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
-            target = Path(temporary)
+            root = Path(temporary)
+            project, target = root / 'project', root / 'retired'
+            project.mkdir(); target.mkdir()
             process = manager.subprocess.Popen([manager.sys.executable, '-c', 'import time; time.sleep(30)'], cwd=target)
             try:
-                with patch.object(manager, 'ensure_stopped'):
-                    with self.assertRaisesRegex(RuntimeError, 'in use by process'):
+                with patch.object(manager, 'ensure_stopped'), patch.dict(os.environ, {'LOCALOCR_PROJECT_ROOT': str(project)}):
+                    with self.assertRaisesRegex(RuntimeError, f'in use by process {process.pid}$'):
                         manager.ensure_retirement_idle(target)
             finally:
                 process.terminate(); process.wait(timeout=5)
+
+    def test_retirement_rejects_unfinished_jobs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jobs = root / 'project/_server/jobs'; jobs.mkdir(parents=True)
+            with patch.object(manager, 'ensure_stopped'), patch.dict(os.environ, {'LOCALOCR_PROJECT_ROOT': str(root / 'project')}):
+                for status in ('running', 'queued', 'cancelling'):
+                    with self.subTest(status=status):
+                        (jobs / 'synthetic.json').write_text(json.dumps({'status': status}), encoding='utf-8')
+                        with self.assertRaisesRegex(RuntimeError, 'An unfinished LocalOCR job remains'):
+                            manager.ensure_retirement_idle(root / 'retired')
 
     def test_successful_switch_survives_cleanup_failure_and_rollback_target_is_protected(self):
         with tempfile.TemporaryDirectory() as temporary:
