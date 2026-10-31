@@ -1,6 +1,6 @@
 # 故障排除
 
-以下 Windows 命令在 LocalOCR 项目根目录执行，仓库可位于任意已挂载盘符；WSL 路径使用 `wslpath` 解析。
+命令的执行目录与 Windows/WSL 路径约定同 [QUICKSTART_FOR_AI.md](QUICKSTART_FOR_AI.md)。
 
 ## 1. GPU 探针失败 / libcuda.so 找不到
 
