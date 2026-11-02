@@ -9,6 +9,6 @@ VL 的 GPU 推理使用 CUDA 延迟加载与数学注意力后端，减少工作
 - **这是什么：** 本机识别图片、扫描 PDF 和截图里的文字。
 - **我怎么用：** 把文件拖到 `start.bat`，在 `outputs/` 看结果。
 - **怎么知道正常：** 能看到识别出的文字；重要内容对照原图核对。
-- **坏了怎么提醒我：** 没有自动提醒，出问题直接跟 AI 说。
+- **坏了怎么提醒我：** 已配置只读[每晚自检](E:/PCConfig/docs/runtime/nightly-project-checks.md)，仅覆盖登记的检查命令；其他问题仍直接跟 AI 说。
 - **让 AI 做什么：** 让 AI 识别指定文件、解释结果和读不清的地方。
 - 详细用法见 [AI 使用说明](docs/QUICKSTART_FOR_AI.md)，排查见 [故障说明](docs/TROUBLESHOOTING.md)。
