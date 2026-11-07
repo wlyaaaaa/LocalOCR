@@ -329,6 +329,8 @@ class GpuBrokerLease:
                         and self._lost_error is None
                     ):
                         raise GpuBrokerError("GPU lease release was rejected.")
+                except GpuBrokerTimeout:
+                    pass  # Stop renewing; an unanswered release expires with the lease.
                 except Exception:
                     if exc_type is None:
                         raise

@@ -95,6 +95,7 @@ class JobRegistry:
     ) -> None:
         self.job_dir = Path(job_dir)
         self.stale_after_sec = stale_after_sec
+        self.active_status = lambda _key: None
 
     @contextmanager
     def _registry_guard(self):
@@ -407,6 +408,9 @@ class JobRegistry:
     def read_status(self, job_key: str) -> dict[str, Any]:
         if not re.fullmatch(r"[0-9a-f]{64}", job_key):
             return {"ok": False, "status": "not_found", "job_key": job_key}
+        active = self.active_status(job_key)
+        if active is not None:
+            return active
         manifest = _read_json(self.job_dir / f"{job_key}.json")
         if not manifest:
             return {"ok": False, "status": "not_found", "job_key": job_key}

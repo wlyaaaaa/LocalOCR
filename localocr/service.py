@@ -87,6 +87,7 @@ class OCRService:
         self._execution: dict[str, Any] | None = None
         self._terminal_persistence_failure: dict[str, Any] | None = None
         self._closed = False
+        self.job_registry.active_status = self._active_job_status
 
     @property
     def gpu_summary(self) -> str | None:
@@ -130,9 +131,16 @@ class OCRService:
         error.context.update(failure)
         raise error
 
+    def _active_job_status(self, job_key: str) -> dict | None:
+        with self._state_lock:
+            if self._active is None or job_key not in self._execution["job_keys"]:
+                return None
+            return {**self._active, "ok": True, "job_key": job_key,
+                    "job_id": job_key[:16], "cache_available": False}
+
     def cancel(self, job_key: str) -> bool:
         with self._state_lock:
-            if self._active is None or self._active["job_key"] != job_key:
+            if self._active is None or job_key not in self._execution["job_keys"]:
                 return False
             self._execution["cancel"].set()
             self._active["stage"] = "cancelling"
@@ -359,7 +367,16 @@ class OCRService:
         )
         output_dir = output_dir.resolve()
         results: list[dict[str, Any]] = []
+        request_cancel = threading.Event()
+
+        def check_cancelled():
+            if request_cancel.is_set():
+                error = ExecutionError("execution_cancelled", "The OCR task was cancelled.", http_status=409)
+                error.context.update(results=results, completed_count=len(results), retryable=False)
+                raise error
+
         for source in files:
+            check_cancelled()
             if time.monotonic() >= request_deadline:
                 error = ExecutionError(
                     "execution_timeout",
@@ -430,7 +447,8 @@ class OCRService:
                         "profiles": profiles,
                         "identities": identities,
                         "source_sha256": request.source_sha256,
-                        "cancel": threading.Event(),
+                        "cancel": request_cancel,
+                        "job_keys": {request.job_key},
                         "deadline": request_deadline,
                         "thread_id": threading.get_ident(),
                         "lease": None,
@@ -471,10 +489,12 @@ class OCRService:
                         if write_files:
                             cached = self.job_registry.cached_response(request)
                             if cached is not None:
+                                check_cancelled()
                                 results.append(cached)
                                 continue
                 claim = self.job_registry.try_claim(request) if write_files else None
                 if claim is not None and claim.kind == "cache_hit":
+                    check_cancelled()
                     results.append(dict(claim.response or {}))
                     continue
                 if claim is not None and claim.kind == "active":
@@ -484,8 +504,10 @@ class OCRService:
                         "results": results,
                     }
                 release_claim = claim is not None and claim.kind == "run"
-                self._execution.update(claim=claim, device=actual_device)
-                self._active.update(job_id=request.job_id, job_key=request.job_key)
+                with self._state_lock:
+                    self._execution.update(claim=claim, device=actual_device)
+                    self._execution["job_keys"].add(request.job_key)
+                    self._active.update(job_id=request.job_id, job_key=request.job_key)
                 initial: dict | None = None
                 initial_profile = profile
                 route_dict = route.to_dict()
@@ -717,6 +739,7 @@ class OCRService:
                             self._active = None
                             self._execution = None
                         self._execution_lock.release()
+        check_cancelled()
         return {
             "ok": True,
             "batch_coverage": "partial" if skipped_inputs else "complete",

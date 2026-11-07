@@ -14,6 +14,7 @@ from localocr.gpu_broker import (
     GpuBrokerError,
     GpuBrokerLease,
     GpuBrokerLeaseLost,
+    GpuBrokerTimeout,
     verify_inherited_gpu_lease,
 )
 from localocr.service import OCRService
@@ -147,6 +148,32 @@ class GpuBrokerLeaseTests(unittest.TestCase):
         with self.assertRaisesRegex(GpuBrokerError, "release failed"):
             with GpuBrokerLease("localocr", transport=transport, renew_interval_seconds=0):
                 pass
+
+
+    def test_release_timeout_is_best_effort_but_rejection_is_strict(self):
+        for response in (GpuBrokerTimeout("synthetic release timeout"), {"ok": False}):
+            with self.subTest(response=response):
+                base = RecordingTransport()
+
+                def transport(action, payload):
+                    result = base(action, payload)
+                    if action == "release":
+                        if isinstance(response, Exception):
+                            raise response
+                        return response
+                    return result
+
+                lease = GpuBrokerLease("localocr", transport=transport, renew_interval_seconds=0)
+                if isinstance(response, GpuBrokerTimeout):
+                    with lease:
+                        pass
+                else:
+                    with self.assertRaisesRegex(GpuBrokerError, "release was rejected"):
+                        with lease:
+                            pass
+                self.assertEqual(lease.token, "")
+                self.assertTrue(lease._stop.is_set())
+                self.assertEqual([call[0] for call in base.calls], ["acquire", "release"])
 
 
 class OCRServiceLeaseTests(unittest.TestCase):

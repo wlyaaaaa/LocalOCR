@@ -5,6 +5,8 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from fastapi.testclient import TestClient
+from localocr import server
 import unittest
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -256,6 +258,81 @@ class BrokerWaitingTests(unittest.TestCase):
             self.assertEqual(errors, ['execution_cancelled'])
             self.assertEqual(calls, ['acquire', 'release'])
             self.assertEqual(service._runtime.calls, [])
+
+
+class ServiceControlTests(unittest.TestCase):
+    service, sources, setUp = DeviceTests.service, DeviceTests.sources, BrokerWaitingTests.setUp
+
+    def test_acquiring_status_overrides_missing_or_failed_and_old_key_cancels_cpu(self):
+        for previous, error in ((p, e) for p in (None, 'failed') for e in (GpuBrokerTimeout('slow'), GpuBrokerUnavailable('offline'), GpuBrokerConflict('busy'))):
+            with self.subTest(previous=previous, error=type(error)), tempfile.TemporaryDirectory() as tmp:
+                root, old_keys = Path(tmp), []
+                @contextmanager
+                def lease(_):
+                    key = client.get('/health').json()['active_jobs'][0]['job_key']
+                    old_keys.append(key)
+                    if previous:
+                        service.job_registry.job_dir.mkdir(parents=True, exist_ok=True)
+                        (root / 'jobs' / f'{key}.json').write_text(json.dumps({'status': previous}))
+                    status = client.get(f'/jobs/{key}')
+                    self.assertEqual(status.status_code, 200)
+                    self.assertEqual(status.json()['status'], 'running')
+                    self.assertEqual(status.json()['stage'], 'acquiring_gpu')
+                    raise error
+                    yield
+                service = self.service(root, gpu_lease_factory=lease)
+                service._runtime.memory_limit_bytes = 30_000_000_000
+                def predict(*_args, **_kwargs):
+                    key = old_keys[0]
+                    self.assertNotEqual(key, service.active_jobs[0]['job_key'])
+                    self.assertEqual(client.get(f'/jobs/{key}').json()['status'], 'running')
+                    self.assertEqual(client.post(f'/jobs/{key}/cancel').status_code, 202)
+                    service._checkpoint()
+                service._runtime.predict = predict
+                with patch.object(server, '_service', service), TestClient(server.app, base_url='http://127.0.0.1:18665') as client:
+                    with self.assertRaises(ExecutionError) as raised:
+                        service.process_inputs(self.sources(root)[:1], engine_choice='ocr', out_dir=root / 'out')
+                self.assertEqual(raised.exception.code, 'execution_cancelled')
+
+    def test_cached_paths_cannot_swallow_accepted_batch_cancellation(self):
+        for branch, count in (('fallback', 2), ('claim', 2), ('claim', 1)):
+            with self.subTest(branch=branch, count=count), tempfile.TemporaryDirectory() as tmp:
+                root, accepted = Path(tmp), []
+                @contextmanager
+                def lease(_):
+                    if branch == 'fallback':
+                        raise GpuBrokerTimeout('synthetic timeout')
+                    yield None
+                    accepted.append(service.cancel(service.active_jobs[0]['job_key']))
+                service = self.service(root, gpu_lease_factory=lease)
+                build = service.job_registry.build_request
+                def build_and_cancel(*args, **kwargs):
+                    request = build(*args, **kwargs)
+                    if branch == 'fallback' and 'device=cpu' in request.request_variant:
+                        accepted.append(service.cancel(service.active_jobs[0]['job_key']))
+                    return request
+                cached = {'cache_status': 'cache_hit'}
+                with patch.object(service.job_registry, 'build_request', side_effect=build_and_cancel), \
+                     patch.object(service.job_registry, 'cached_response', side_effect=lambda r: cached if branch == 'fallback' and 'device=cpu' in r.request_variant else None), \
+                     patch.object(service.job_registry, 'try_claim', return_value=Mock(kind='cache_hit', response=cached)):
+                    with self.assertRaises(ExecutionError) as raised:
+                        service.process_inputs(self.sources(root)[:count], engine_choice='ocr', out_dir=root / 'out')
+                self.assertEqual(accepted, [True])
+                self.assertEqual(raised.exception.code, 'execution_cancelled')
+                self.assertEqual(service._runtime.calls, [])
+
+    def test_release_timeout_keeps_completed_manifests_and_continues_batch(self):
+        def transport(action, _payload):
+            if action == 'release':
+                raise GpuBrokerTimeout('synthetic release timeout')
+            return {'ok': True, 'token': 'synthetic-token', 'owner': 'localocr'}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self.service(root, gpu_lease_factory=lambda _: broker.GpuBrokerLease('localocr', transport=transport, renew_interval_seconds=0))
+            result = service.process_inputs(self.sources(root), engine_choice='ocr', out_dir=root / 'out')
+            self.assertTrue(result['ok'])
+            self.assertEqual(len(service._runtime.calls), 2)
+            self.assertEqual([service.job_registry.read_status(r['job_key'])['status'] for r in result['results']], ['completed', 'completed'])
 
 
 if __name__ == '__main__':
