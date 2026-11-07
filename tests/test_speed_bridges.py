@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,7 +26,7 @@ class CurlBridgeTests(unittest.TestCase):
                 self.assertEqual(json.loads(kwargs["input"]), payload)
                 self.assertNotIn("private test owner", " ".join(args))
                 self.assertEqual(args[args.index("--data-binary") + 1], "@-")
-                self.assertEqual(kwargs["timeout"], 20)
+                self.assertEqual(kwargs["timeout"], broker.RELEASE_TIMEOUT_SECONDS)
                 self.assertIn("\n%{http_code}", args)
 
     def test_failures(self):
@@ -42,12 +43,40 @@ class CurlBridgeTests(unittest.TestCase):
                 broker.default_transport("url")
                 which.assert_called_once_with("curl.exe")
                 if expected:
-                    curl.assert_called_with("url", expected)
+                    curl.assert_called_with("url", expected, broker.RELEASE_TIMEOUT_SECONDS)
                     powershell.assert_not_called()
                 else:
-                    powershell.assert_called_with("url")
+                    powershell.assert_called_with("url", broker.RELEASE_TIMEOUT_SECONDS)
         with patch.dict(os.environ, {}, clear=True), patch.object(broker.os.path, "exists", return_value=False), patch.object(broker, "_urllib_transport", return_value="urllib"):
             self.assertEqual(broker.default_transport("url"), "urllib")
+
+
+class BrokerBudgetsTests(unittest.TestCase):
+    def test_action_budgets_and_inherited_verification(self):
+        lease = broker.GpuBrokerLease('localocr')
+        with patch.object(broker.time, 'monotonic', return_value=100), patch.object(broker, 'default_transport') as transport:
+            lease.deadline = 200
+            for action, expected in (('acquire', 50), ('renew', 45), ('release', 10)):
+                lease._send(action, {})
+                self.assertEqual(transport.call_args.args[1], expected)
+            lease.deadline = 1000
+            lease._send('acquire', {})
+            self.assertEqual(transport.call_args.args[1], 120)
+            transport.return_value.return_value = {'ok': True, 'owner': 'localocr'}
+            broker.verify_inherited_gpu_lease({'base_url': 'url', 'token': 't', 'owner': 'localocr', 'ttl_seconds': 90})
+            transport.assert_called_with('url', 45)
+
+    def test_bridge_timeouts_remain_distinct_and_keep_details(self):
+        for make in (lambda: broker._curl_transport('url', 'curl.exe', .2),
+                     lambda: broker._powershell_transport('url', .2)):
+            with patch.object(broker.subprocess, 'run', side_effect=subprocess.TimeoutExpired('synthetic', .2)):
+                with self.assertRaisesRegex(broker.GpuBrokerTimeout, 'synthetic'):
+                    make()('acquire', {})
+        for code, error in ((28, broker.GpuBrokerTimeout), (7, broker.GpuBrokerUnavailable)):
+            result = SimpleNamespace(returncode=code, stdout=b'', stderr=b'synthetic detail')
+            with patch.object(broker.subprocess, 'run', return_value=result):
+                with self.assertRaisesRegex(error, 'synthetic detail'):
+                    broker._curl_transport('url', 'curl.exe')('acquire', {})
 
 
 @unittest.skipUnless(os.name == "posix", "select on process pipes requires POSIX/WSL")

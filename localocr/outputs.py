@@ -183,7 +183,12 @@ def build_display_summary(result: dict[str, Any]) -> dict[str, Any]:
     else:
         message = "未提取到可确认文字，但当前证据不足以判断图片确实无文字。"
     if "escalation_skipped_gpu_unavailable" in warnings:
-        message += "需要升级的页因显卡被占用未升级。"
+        reason = str(route.get("device_reason") or "")
+        cause = ("显卡被占用" if reason.startswith("gpu_busy:") else {
+            "gpu_broker_timeout": "显卡调度服务答复超时",
+            "gpu_broker_unavailable": "无法连接显卡调度服务",
+        }.get(reason, "显卡调度服务未能提供显卡"))
+        message += f"需要升级的页因{cause}未升级。"
 
     return {
         "status": outcome,

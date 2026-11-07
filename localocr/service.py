@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from .difficulty import POLICY_VERSION as DIFFICULTY_POLICY_VERSION
 from .difficulty import OCRDifficultyAssessment, assess_ocr_difficulty, assess_ocr_pages
-from .gpu_broker import GpuBrokerConflict, GpuBrokerError, GpuBrokerLease, GpuBrokerLeaseLost
+from .gpu_broker import GpuBrokerConflict, GpuBrokerError, GpuBrokerLease, GpuBrokerLeaseLost, GpuBrokerTimeout, GpuBrokerUnavailable
 from .memory_budget import close_host_memory_probe
 from .job_registry import JobClaim, JobRegistry
 from .model_registry import (
@@ -336,6 +336,7 @@ class OCRService:
         policy = "cpu" if self.device == "cpu" else device
         actual_device = "cpu" if policy == "cpu" else self.device
         device_reason = "requested" if policy != "auto" else "gpu_available"
+        device_detail = None
         timeout = self.isolated_timeout_sec if timeout_sec is None else timeout_sec
         if (
             isinstance(timeout, bool)
@@ -422,31 +423,6 @@ class OCRService:
             lease_scope = ExitStack()
             try:
                 lease = None
-                if actual_device != "cpu":
-                    try:
-                        lease = lease_scope.enter_context(self._gpu_lease_factory("localocr"))
-                    except GpuBrokerError as exc:
-                        if policy != "auto" or isinstance(exc, GpuBrokerLeaseLost) or profile.cpu_options is None:
-                            raise
-                        actual_device = "cpu"
-                        device_reason = f"gpu_busy:{exc.owner}" if isinstance(exc, GpuBrokerConflict) else "gpu_broker_unavailable"
-                        request = build_request(actual_device)
-                        if write_files:
-                            cached = self.job_registry.cached_response(request)
-                            if cached is not None:
-                                results.append(cached)
-                                continue
-                claim = self.job_registry.try_claim(request) if write_files else None
-                if claim is not None and claim.kind == "cache_hit":
-                    results.append(dict(claim.response or {}))
-                    continue
-                if claim is not None and claim.kind == "active":
-                    return {
-                        **dict(claim.response or {}),
-                        "count": len(results),
-                        "results": results,
-                    }
-                release_claim = claim is not None and claim.kind == "run"
                 now = datetime.now(timezone.utc)
                 with self._state_lock:
                     self._execution = {
@@ -476,10 +452,46 @@ class OCRService:
                         ).isoformat(),
                         "worker_pid": None,
                     }
+                if actual_device != "cpu":
+                    try:
+                        lease_context = self._gpu_lease_factory("localocr")
+                        if isinstance(lease_context, GpuBrokerLease):
+                            lease_context.deadline, lease_context.checkpoint = request_deadline, self._checkpoint
+                        lease = lease_scope.enter_context(lease_context)
+                    except GpuBrokerError as exc:
+                        if policy != "auto" or isinstance(exc, GpuBrokerLeaseLost) or profile.cpu_options is None:
+                            raise
+                        actual_device = "cpu"
+                        device_reason = ("gpu_broker_timeout" if isinstance(exc, GpuBrokerTimeout) else
+                                         "gpu_broker_unavailable" if isinstance(exc, GpuBrokerUnavailable) else "gpu_broker_error")
+                        if isinstance(exc, GpuBrokerConflict):
+                            device_reason = (f"gpu_busy:{exc.owner}" if exc.reason in {"gpu_conflict", "gpu_lease_active", "ollama_session_active", "ollama_request_active"} else "gpu_broker_error")
+                        device_detail = f"{type(exc).__name__}: {exc}"
+                        request = build_request(actual_device)
+                        if write_files:
+                            cached = self.job_registry.cached_response(request)
+                            if cached is not None:
+                                results.append(cached)
+                                continue
+                claim = self.job_registry.try_claim(request) if write_files else None
+                if claim is not None and claim.kind == "cache_hit":
+                    results.append(dict(claim.response or {}))
+                    continue
+                if claim is not None and claim.kind == "active":
+                    return {
+                        **dict(claim.response or {}),
+                        "count": len(results),
+                        "results": results,
+                    }
+                release_claim = claim is not None and claim.kind == "run"
+                self._execution.update(claim=claim, device=actual_device)
+                self._active.update(job_id=request.job_id, job_key=request.job_key)
                 initial: dict | None = None
                 initial_profile = profile
                 route_dict = route.to_dict()
                 route_dict.update(device=actual_device, device_reason=device_reason)
+                if device_detail is not None:
+                    route_dict["device_detail"] = device_detail
                 try:
                     self._progress({"stage": "acquiring_gpu"})
                     with lease_scope:

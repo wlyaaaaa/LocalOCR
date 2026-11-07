@@ -1,10 +1,16 @@
 from __future__ import annotations
+import json
+import socket
 import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import unittest
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
-from localocr.gpu_broker import GpuBrokerConflict, GpuBrokerError, GpuBrokerLeaseLost
+from localocr import gpu_broker as broker
+from localocr.gpu_broker import GpuBrokerConflict, GpuBrokerError, GpuBrokerLeaseLost, GpuBrokerTimeout, GpuBrokerUnavailable
 from localocr.runtime import ExecutionError
 from localocr.service import OCRService
 
@@ -48,8 +54,10 @@ class DeviceTests(unittest.TestCase):
         return files
 
     def test_auto_conflict_and_unavailable_stick_to_cpu_and_mark_skipped_upgrade(self):
-        for error, reason in ((GpuBrokerConflict('busy', owner='video-scaffold'), 'gpu_busy:video-scaffold'),
-                              (GpuBrokerError('offline'), 'gpu_broker_unavailable')):
+        for error, reason, message in ((GpuBrokerConflict('busy', owner='video-scaffold'), 'gpu_busy:video-scaffold', '显卡被占用'),
+                                       (GpuBrokerUnavailable('offline'), 'gpu_broker_unavailable', '无法连接显卡调度服务'),
+                                       (GpuBrokerTimeout('late'), 'gpu_broker_timeout', '显卡调度服务答复超时'),
+                                       (GpuBrokerConflict('unload failed', reason='resource_release_failed:TimeoutError'), 'gpu_broker_error', '显卡调度服务未能提供显卡')):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 lease = Mock(side_effect=error)
@@ -65,7 +73,8 @@ class DeviceTests(unittest.TestCase):
                     self.assertEqual(result['route']['escalation_skipped'], {'reason': 'gpu_unavailable', 'page_indices': [0]})
                     self.assertNotEqual(result['quality']['status'], 'sufficient')
                     self.assertIn('escalation_skipped_gpu_unavailable', result['display_summary']['warnings'])
-                    self.assertIn('需要升级的页因显卡被占用未升级', result['display_summary']['message'])
+                    self.assertIn(f'需要升级的页因{message}未升级', result['display_summary']['message'])
+                    self.assertEqual(result['route']['device_detail'], f'{type(error).__name__}: {error}')
 
     def test_vl_gpu_policy_and_lease_lost_never_fall_back(self):
         cases = [('vl', 'auto', GpuBrokerConflict('busy')), ('structure', 'auto', GpuBrokerConflict('busy')),
@@ -140,3 +149,114 @@ class DeviceTests(unittest.TestCase):
             self.assertGreater(service._vl_runtime.closed, 0)
             shared = self.service(root / 'shared', vl_runtime=None)
             self.assertIs(shared._runtime, shared._vl_runtime)
+
+
+@contextmanager
+def delayed_broker(delay):
+    calls, entered, released = [], threading.Event(), threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            action = self.path.rsplit('/', 1)[-1]
+            self.rfile.read(int(self.headers['Content-Length']))
+            calls.append(action)
+            if action == 'acquire':
+                entered.set()
+                time.sleep(delay)
+            else:
+                released.set()
+            body = json.dumps({'ok': True, 'token': 'synthetic-token', 'owner': 'localocr'}).encode()
+            try:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+            except OSError:
+                pass
+        def log_message(self, *_):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_port}', calls, entered, released
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(1)
+
+
+class BrokerWaitingTests(unittest.TestCase):
+    service, sources = DeviceTests.service, DeviceTests.sources
+
+    def setUp(self):
+        identity = patch('localocr.service.execution_sha256', return_value='synthetic-identity')
+        identity.start()
+        self.addCleanup(identity.stop)
+
+    def test_slow_reply_survives_old_limit_and_still_escalates(self):
+        with delayed_broker(.08) as (url, calls, _, released), tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(GpuBrokerTimeout):
+                broker._urllib_transport(url, .02)('acquire', {})
+            root = Path(tmp)
+            service = self.service(root, runtime=Runtime(score=.1),
+                                   gpu_lease_factory=lambda _: broker.GpuBrokerLease('localocr', base_url=url))
+            with patch.object(broker, 'ACQUIRE_TIMEOUT_SECONDS', .4), \
+                 patch.object(broker, 'default_transport', side_effect=broker._urllib_transport):
+                result = service.process_inputs(self.sources(root)[:1], write_files=False)['results'][0]
+            self.assertEqual(result['route']['device_reason'], 'gpu_available')
+            self.assertTrue(result['route']['escalated'])
+            self.assertEqual(service._runtime.calls[0]['device'], 'gpu:0')
+            self.assertTrue(released.is_set())
+            self.assertEqual(calls.count('acquire'), 2)  # Old-limit probe plus one new acquisition.
+
+    def test_unresponsive_broker_leaves_time_for_cpu(self):
+        with delayed_broker(1.5) as (url, calls, _, _), tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self.service(root, runtime=Runtime(score=.1),
+                                   gpu_lease_factory=lambda _: broker.GpuBrokerLease('localocr', base_url=url))
+            with patch.object(broker, 'ACQUIRE_TIMEOUT_SECONDS', .1), patch.object(broker, 'default_transport', side_effect=broker._urllib_transport):
+                started = time.monotonic()
+                result = service.process_inputs(self.sources(root)[:1], write_files=False, timeout_sec=1)['results'][0]
+                self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(result['route']['device_reason'], 'gpu_broker_timeout')
+            self.assertEqual(service._runtime.calls[0]['device'], 'cpu')
+            self.assertIn('Timeout', result['route']['device_detail'])
+            self.assertEqual(calls, ['acquire'])
+
+    def test_refused_socket_falls_back_quickly(self):
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))
+            url = f'http://127.0.0.1:{reserved.getsockname()[1]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self.service(root, gpu_lease_factory=lambda _: broker.GpuBrokerLease('localocr', base_url=url))
+            with patch.object(broker, 'default_transport', side_effect=broker._urllib_transport):
+                started = time.monotonic()
+                result = service.process_inputs(self.sources(root)[:1], write_files=False)['results'][0]
+                self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(result['route']['device_reason'], 'gpu_broker_unavailable')
+            self.assertEqual(service._runtime.calls[0]['device'], 'cpu')
+
+    def test_cancelling_acquisition_releases_late_token(self):
+        with delayed_broker(.25) as (url, calls, entered, released), tempfile.TemporaryDirectory() as tmp:
+            root, errors = Path(tmp), []
+            service = self.service(root, gpu_lease_factory=lambda _: broker.GpuBrokerLease('localocr', base_url=url))
+            def run():
+                try:
+                    service.process_inputs(self.sources(root)[:1], write_files=False)
+                except ExecutionError as exc:
+                    errors.append(exc.code)
+            with patch.object(broker, 'default_transport', side_effect=broker._urllib_transport):
+                thread = threading.Thread(target=run)
+                thread.start()
+                self.assertTrue(entered.wait(5))
+                self.assertTrue(service.cancel(service.active_jobs[0]['job_key']))
+                thread.join(.2)
+                self.assertFalse(thread.is_alive())
+                self.assertTrue(released.wait(1))
+            self.assertEqual(errors, ['execution_cancelled'])
+            self.assertEqual(calls, ['acquire', 'release'])
+            self.assertEqual(service._runtime.calls, [])
+
+
+if __name__ == '__main__':
+    unittest.main()

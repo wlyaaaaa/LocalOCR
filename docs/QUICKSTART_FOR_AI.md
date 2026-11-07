@@ -171,6 +171,7 @@ gpu 策略或不支持 CPU 的 profile 遇到 GPU 冲突返回 409，broker 不�
 每个结果还包含 `results[].route`，其中 `effective_engine` 是最终引擎，`reason` 是路由原因，
 `signals` 是命中的信号，`confidence` 在自动路线上为 `null`，不是校准正确率。auto 首轮 OCR 还包含 `difficulty` 和
 `escalated`；发生升级时 `escalation` 会记录原模型与最终 VL 模型。`route.device` 和 `device_reason` 记录实际设备及选择原因。
+申请显卡最多等待 120 秒或剩余执行期限的一半（取较小值）；超时为 `gpu_broker_timeout`，连接失败为 `gpu_broker_unavailable`，实际占用为 `gpu_busy:<owner>`，其他调度拒绝为 `gpu_broker_error`。CPU 降级时 `route.device_detail` 保留异常类型与详情；超时不会盲目重试申请，续租等待最多为租约 TTL 的一半，释放等待最多 10 秒。
 
 ## 路由规则（auto 模式）
 
