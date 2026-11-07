@@ -60,6 +60,58 @@ class WindowsWrapperTest(unittest.TestCase):
         ).stdout.strip()
 
     @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
+    def test_wsl_path_preserves_failure_diagnostics_and_separates_stderr(self) -> None:
+        with tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
+            helper = Path(temp_dir) / "scripts/windows_paths.ps1"
+            helper.parent.mkdir()
+            helper.write_bytes((ROOT / "scripts/windows_paths.ps1").read_bytes())
+            script = self._windows_script_path(helper).replace("'", "''")
+            for exit_code, stdout, stderr, recover in (
+                (7, "WSL stdout failure", "", False), (9, "", "WSL stderr failure", False),
+                (0, "", "", False), (0, "/custom-mount/e/synthetic path.png", "WSL warning", False),
+                (7, "transient stdout", "transient stderr", True),
+                (7, "transient stdout", "transient stderr", "log_failure"),
+            ):
+                with self.subTest(exit_code=exit_code, recover=recover, stdout=stdout, stderr=stderr):
+                    command = f"""
+$ErrorActionPreference = 'Stop'
+. '{script}'
+$script:attempt = 0; $script:logWriteFailed = $false
+{"function Add-Content { $script:logWriteFailed=$true; throw 'synthetic log write failure' }" if recover == "log_failure" else ""}
+function Invoke-LocalOcrWslPathCommand {{
+    param([string[]]$Arguments, [int]$TimeoutSec)
+    $script:attempt++
+    if ({'$true' if recover else '$false'} -and $script:attempt -gt 1) {{ return @{{exit_code=0;timed_out=$false;stdout='/recovered path';stderr=''}} }}
+    return @{{exit_code={exit_code};timed_out=$false;stdout='{stdout}';stderr='{stderr}'}}
+}}
+$path=$null; $errorMessage=$null
+try {{ $path = ConvertTo-LocalOcrWslPath -Path 'C:/synthetic/sample.png' }} catch {{ $errorMessage=$_.Exception.Message }}
+$log=Join-Path (Split-Path (Split-Path '{script}')) '_server/wslpath-retries.log'
+@{{path=$path;error=$errorMessage;attempts=$script:attempt;log_write_failed=$script:logWriteFailed;log=$(if(Test-Path $log){{Get-Content $log -Raw}}else{{''}})}} | ConvertTo-Json -Compress
+"""
+                    completed = subprocess.run(
+                        ["pwsh" if os.name == "nt" else "pwsh.exe", "-NoProfile", "-Command", command],
+                        capture_output=True, text=False, timeout=10,
+                    )
+                    self.assertEqual(completed.returncode, 0, _decode_process_output(completed.stderr))
+                    payload = json.loads(_decode_process_output(completed.stdout))
+                    self.assertEqual(payload["attempts"], 2 if recover else 3 if exit_code or not stdout else 1)
+                    if (exit_code or not stdout) and not recover:
+                        self.assertIsNone(payload["path"])
+                        for attempt in range(1, 4):
+                            self.assertIn(f"attempt {attempt}:", payload["error"])
+                        self.assertIn(f"exit={exit_code}", payload["error"])
+                        self.assertIn(stdout or stderr or "stdout=[]", payload["error"])
+                    else:
+                        self.assertEqual(payload["path"], "/recovered path" if recover else stdout)
+                        self.assertIsNone(payload["error"])
+                        if recover is True:
+                            self.assertIn(stdout, payload["log"])
+                            self.assertIn(stderr, payload["log"])
+                        elif recover == "log_failure":
+                            self.assertTrue(payload["log_write_failed"])
+
+    @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_start_converts_chinese_windows_path_before_cli(self) -> None:
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
         self._assert_start_converts_chinese_windows_path_before_cli(executable)
@@ -135,6 +187,9 @@ class WindowsWrapperTest(unittest.TestCase):
             script_copy.write_bytes((ROOT / "start.ps1").read_bytes())
             (script_copy.parent / "scripts").mkdir()
             shutil.copy2(ROOT / "scripts/windows_paths.ps1", script_copy.parent / "scripts/windows_paths.ps1")
+            with (script_copy.parent / "scripts/windows_paths.ps1").open("a", encoding="utf-8") as helper:
+                helper.write("\nfunction Invoke-LocalOcrWslPathCommand { param([string[]]$Arguments)\n"
+                             "$out = & wsl.exe @Arguments; @{exit_code=$LASTEXITCODE; timed_out=$false; stdout=($out -join \"`n\"); stderr=''}\n}\n")
             script_path = self._windows_script_path(script_copy)
             input_path = Path(temp_dir) / "中文目录" / "示例 $100 $(echo PWNED) `echo text` ' 图片.png"
             input_path.parent.mkdir()
@@ -386,10 +441,12 @@ Set-Location -LiteralPath '{working_dir}'
     @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_process_deadline_includes_inherited_output_pipes(self) -> None:
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
-        for filename, function in (("ocr_smart.ps1", "Invoke-BoundedProcess"),
-                                   ("stop_server.ps1", "Invoke-WslCommand")):
+        for filename, function, wait_parent in (("ocr_smart.ps1", "Invoke-BoundedProcess", False),
+                ("stop_server.ps1", "Invoke-WslCommand", False),
+                ("scripts/windows_paths.ps1", "Invoke-LocalOcrWslPathCommand", False),
+                ("scripts/windows_paths.ps1", "Invoke-LocalOcrWslPathCommand", True)):
             # Windows children need drive-local fixtures rather than WSL /tmp UNC paths.
-            with self.subTest(function=function), tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
+            with self.subTest(function=function, wait_parent=wait_parent), tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
                 folder = Path(temp_dir)
                 child = folder / "child.ps1"
                 parent = folder / "parent.ps1"
@@ -400,7 +457,7 @@ Set-Location -LiteralPath '{working_dir}'
                     encoding="utf-8-sig",
                 )
                 parent.write_text("""
-param([string]$ChildPath, [string]$StatePath)
+param([string]$ChildPath, [string]$StatePath, [switch]$Wait)
 $psi = [Diagnostics.ProcessStartInfo]::new()
 $psi.FileName = (Get-Process -Id $PID).Path
 $psi.UseShellExecute = $false
@@ -410,6 +467,7 @@ $child = [Diagnostics.Process]::Start($psi)
 [IO.File]::WriteAllText($StatePath, (@{parent=$PID; child=$child.Id} | ConvertTo-Json -Compress))
 [Console]::Out.WriteLine('parent-out')
 [Console]::Error.WriteLine('parent-err')
+if ($Wait) { Start-Sleep -Seconds 20 }
 exit 0
 """, encoding="utf-8-sig")
                 paths = [ROOT / filename, parent, child, state]
@@ -424,18 +482,30 @@ $definition = $ast.Find({{param($node)
 }}, $true).Extent.Text
 # Only substitute the executable; never execute the wrapper's top-level code or WSL.
 $definition = $definition.Replace('$psi.FileName = "wsl.exe"', '$psi.FileName = (Get-Process -Id $PID).Path')
+$definition = $definition.Replace("::new('wsl.exe')", '::new((Get-Process -Id $PID).Path)')
 Invoke-Expression $definition
+$utf8 = $null
+if ($functionName -eq 'Invoke-LocalOcrWslPathCommand') {{
+    $savedEncoding = [Console]::OutputEncoding; $savedWslUtf8 = $env:WSL_UTF8
+    try {{
+        [Console]::OutputEncoding = [Text.Encoding]::GetEncoding('gb2312'); $env:WSL_UTF8 = '0'
+        $utf8Script = '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Out.Write("中文输出|"+$env:WSL_UTF8); [Console]::Error.Write("中文错误")'
+        $utf8 = Invoke-LocalOcrWslPathCommand -Arguments @('-NoProfile', '-Command', $utf8Script) -TimeoutSec 5
+    }} finally {{ [Console]::OutputEncoding = $savedEncoding; $env:WSL_UTF8 = $savedWslUtf8 }}
+}}
 $ordinary = foreach ($exitCode in @(0, 7)) {{
     $argsForExit = @('-NoProfile', '-Command', "[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit $exitCode")
     if ($functionName -eq 'Invoke-BoundedProcess') {{
         $r = Invoke-BoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $argsForExit -TimeoutSec 5
         @{{timed_out=$r.timed_out; start_failed=$r.start_failed; exit_code=$r.exit_code; stdout=$r.stdout; stderr=$r.stderr}}
+    }} elseif ($functionName -eq 'Invoke-LocalOcrWslPathCommand') {{
+        Invoke-LocalOcrWslPathCommand -Arguments $argsForExit -TimeoutSec 5
     }} else {{
         try {{ @{{stdout=(Invoke-WslCommand -Arguments $argsForExit -TimeoutSec 5)}} }}
         catch {{ @{{error=$_.Exception.Message}} }}
     }}
 }}
-$arguments = @('-NoProfile', '-File', $parentPath, $childPath, $statePath)
+$arguments = @('-NoProfile', '-File', $parentPath, $childPath, $statePath{", '-Wait'" if wait_parent else ""})
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $timedOut = $false
 $result = $null
@@ -443,9 +513,13 @@ try {{
     if ($functionName -eq 'Invoke-BoundedProcess') {{
         $result = Invoke-BoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments -TimeoutSec 1
         $timedOut = $result.timed_out
+    }} elseif ($functionName -eq 'Invoke-LocalOcrWslPathCommand') {{
+        $result = Invoke-LocalOcrWslPathCommand -Arguments $arguments -TimeoutSec {2 if wait_parent else 1}
+        $timedOut = $result.timed_out
     }} else {{ $result = Invoke-WslCommand -Arguments $arguments -TimeoutSec 1 }}
 }} catch {{ $result = $_.Exception.Message; $timedOut = $result.StartsWith('wsl.exe timed out after 1s:') }}
 $watch.Stop()
+if (-not (Test-Path $statePath)) {{ throw ('Parent state missing: ' + ($result | ConvertTo-Json -Compress)) }}
 $ids = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
 $parentExited = $null -eq (Get-Process -Id $ids.parent -ErrorAction SilentlyContinue)
 $childProcess = Get-Process -Id $ids.child -ErrorAction SilentlyContinue
@@ -453,7 +527,7 @@ $childAliveAtReturn = $null -ne $childProcess -and -not $childProcess.HasExited
 $childExited = $null -eq $childProcess -or $childProcess.WaitForExit(8000)
 @{{elapsed=$watch.Elapsed.TotalSeconds; timed_out=$timedOut; parent_exited=$parentExited;
    child_alive_at_return=$childAliveAtReturn; child_exited=$childExited;
-   child_natural_exit=(Test-Path -LiteralPath ($statePath + '.done')); result=$result; ordinary=@($ordinary)}} | ConvertTo-Json -Depth 4 -Compress
+   child_natural_exit=(Test-Path -LiteralPath ($statePath + '.done')); result=$result; ordinary=@($ordinary); utf8=$utf8}} | ConvertTo-Json -Depth 4 -Compress
 """
                 completed = subprocess.run(
                     [executable, "-NoProfile", "-Command", command],
@@ -464,13 +538,17 @@ $childExited = $null -eq $childProcess -or $childProcess.WaitForExit(8000)
                 print(function + ": " + json.dumps(payload), flush=True)
                 expected = ([dict(timed_out=False, start_failed=False, exit_code=code, stdout="out", stderr="err")
                              for code in (0, 7)] if function == "Invoke-BoundedProcess"
+                            else [dict(timed_out=False, exit_code=code, stdout="out", stderr="err")
+                                  for code in (0, 7)] if function == "Invoke-LocalOcrWslPathCommand"
                             else [dict(stdout="out"), dict(error="wsl.exe failed: err")])
                 self.assertEqual(payload["ordinary"], expected)
+                if function == "Invoke-LocalOcrWslPathCommand":
+                    self.assertEqual(payload["utf8"], dict(exit_code=0, timed_out=False, stdout="中文输出|1", stderr="中文错误"))
                 self.assertTrue(payload["parent_exited"], payload)
                 self.assertTrue(payload["child_exited"], payload)
                 self.assertTrue(payload["child_natural_exit"], payload)
                 self.assertTrue(payload["timed_out"], payload)
-                self.assertLess(payload["elapsed"], 2.5, payload)
+                self.assertLess(payload["elapsed"], 3.5 if wait_parent else 2.5, payload)
                 self.assertTrue(payload["child_alive_at_return"], payload)
 
     def test_ocr_smart_uses_smart_router_v2_preview(self) -> None:

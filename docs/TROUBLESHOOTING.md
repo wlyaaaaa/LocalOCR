@@ -63,6 +63,15 @@ UVDoc 是纸张形变矫正，不是截图锐化；现行普通 OCR 默认关闭
 
 ## 8. API 服务启动后健康检查超时
 
+### `Cannot resolve the WSL path`
+
+Windows 路径转换最多尝试 3 次，每次命令及输出读取上限 60 秒，重试间隔 0.5 秒；超时只结束本次 `wsl.exe` 包装进程。调用显式启用 WSL UTF-8 输出并按 UTF-8 读取两路输出，不依赖控制台编码。
+重试恢复后，`_server/wslpath-retries.log` 记录先前各次失败的退出码和原始输出；日志写入失败不会使转换失败。最终异常的 `detail` 保留全部失败详情，包括空输出及超时。
+排查时保留完整错误，并记录 `wsl.exe -l -v` 的发行版状态，以及同环境下 `wsl.exe -d Ubuntu -e wslpath -a -u <项目绝对路径>` 的结果。单凭路径错误不能判断登录身份或 WSL 本身的原因。
+验冷启动前确认 `/health` 不可达，已有服务会跳过路径转换。
+
+### `/health` 等待超时
+
 **现象**：`start_server.ps1` 等待 `/health` 超时。
 
 **排查**：读取 `_server/localocr-api.log`，再检查目标端口的 `/health`。
