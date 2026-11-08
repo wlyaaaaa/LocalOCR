@@ -76,7 +76,7 @@ paddleocr==3.7.0
 paddlepaddle-gpu==3.4.0
 paddlex==3.7.2
 pandas==3.0.3
-pillow==12.1.0
+pillow==13.0.0
 pluggy==1.6.0
 premailer==3.10.0
 prettytable==3.18.0
