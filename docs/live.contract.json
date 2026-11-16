@@ -1,0 +1,390 @@
+{
+  "v": 1,
+  "id": "localocr",
+  "name": "识字放大镜",
+  "about": "在本机把图片、截图和扫描件里的字认出来，不上传。",
+  "headline": "source_materials",
+  "tasks": [],
+  "skills": [
+    "localocr"
+  ],
+  "bindings_complete": true,
+  "sections": [
+    {
+      "id": "volume",
+      "label": "识了多少",
+      "about": "识过多少，多少识别稿还在？",
+      "metrics": [
+        "source_materials",
+        "available_materials"
+      ],
+      "note": "含 AI 批量识的网站截图和试验图；两数之差表示识别稿已不全或不在，不据此认定损坏。静态数按需取；每晚采样待共享接线。"
+    },
+    {
+      "id": "recent-use",
+      "label": "最近还在用吗",
+      "about": "最近还在用吗，平时用得多不多？",
+      "metrics": [
+        "latest_completed",
+        "recent_7",
+        "recent_30"
+      ],
+      "note": "近几天从取数那一刻往回算；记录清理会影响留存窗口。"
+    },
+    {
+      "id": "difficulty",
+      "label": "难认的有多少",
+      "about": "难认的多不多，机器觉得有多大把握？",
+      "metrics": [
+        "escalated",
+        "low_confidence"
+      ],
+      "note": "没把握是机器自评，不等于错；没有人工核过准确率。换强模型统计完成请求，不是不同原件数。"
+    },
+    {
+      "id": "models",
+      "label": "为它装了什么",
+      "about": "它占我多少硬盘？",
+      "metrics": [
+        "models"
+      ],
+      "note": "1 GB＝2^30 字节；只计模型目录逻辑大小，不含环境和识别结果。读取已有实测，模型变动后按需更新。"
+    },
+    {
+      "id": "more-data",
+      "label": "更多数据",
+      "about": "好奇：留存记录、页数、机器质量原因、文件类型和正式版本验收。",
+      "metrics": [
+        "completed_records",
+        "processed_pages",
+        "available_results",
+        "available_pages",
+        "auto_fast_percent",
+        "unknown",
+        "sufficient",
+        "flags",
+        "cpu_results",
+        "types",
+        "recent_records_7",
+        "recent_records_30",
+        "recent",
+        "runtime",
+        "tests",
+        "skipped",
+        "quality_cases",
+        "quality_passed",
+        "job_states"
+      ],
+      "note": "页次含重复识别；按原件只取最新且四种产物完整的结果。未给质量结论的原因旗标可交叠，不相加当原件总数，不换算准确率。合成样例通过数只说明版本验收。"
+    }
+  ],
+  "metrics": [
+    {
+      "id": "source_materials",
+      "label": "识过的不同材料",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/source_materials",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same",
+      "note": "识过多少：按原件内容去重，留存记录范围内。"
+    },
+    {
+      "id": "available_materials",
+      "label": "识别稿现在还完整的",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/available_materials",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same",
+      "note": "还能拿出来用的有多少：四种产物仍在。"
+    },
+    {
+      "id": "latest_completed",
+      "label": "最近一次识别",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/latest_completed",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "note": "最近还在用吗：完成记录的处理日期。"
+    },
+    {
+      "id": "recent_7",
+      "label": "近 7 天识过",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/recent_7",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same",
+      "note": "平时用得多不多：窗口内不同原件。"
+    },
+    {
+      "id": "recent_30",
+      "label": "近 30 天识过",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/recent_30",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same",
+      "note": "平时用得多不多：窗口内不同原件。"
+    },
+    {
+      "id": "escalated",
+      "label": "自动挑模型时换了强模型的",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/escalated",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "note": "难认的多不多：自动请求的最终模型分工。"
+    },
+    {
+      "id": "low_confidence",
+      "label": "识别器自己标“没把握”的",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/low_confidence",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same",
+      "note": "这些字靠不靠得住：仅机器标记。"
+    },
+    {
+      "id": "models",
+      "label": "本机识字模型占地",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/models",
+      "time": "/at",
+      "mode": "live",
+      "unit": "",
+      "public": "same",
+      "stale_after": 604800,
+      "records": "/metrics/model_records",
+      "shape": "list"
+    },
+    {
+      "id": "completed_records",
+      "label": "已做完识别的留存记录",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/completed_records",
+      "time": "/at",
+      "mode": "static",
+      "unit": "次",
+      "public": "same"
+    },
+    {
+      "id": "processed_pages",
+      "label": "识别产生的页结果",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/processed_pages",
+      "time": "/at",
+      "mode": "static",
+      "unit": "页次",
+      "public": "same"
+    },
+    {
+      "id": "available_results",
+      "label": "现在还留着的识别稿",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/available_results",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same"
+    },
+    {
+      "id": "available_pages",
+      "label": "这些原件的去重页结果",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/available_pages",
+      "time": "/at",
+      "mode": "static",
+      "unit": "页",
+      "public": "same"
+    },
+    {
+      "id": "auto_fast_percent",
+      "label": "自动识别里普通模型完成占比",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/auto_fast_percent",
+      "time": "/at",
+      "mode": "static",
+      "unit": "%",
+      "public": "same",
+      "note": "只说明没有升级，不是准确率或已核准够用。"
+    },
+    {
+      "id": "unknown",
+      "label": "识别器未给质量结论的原件",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/unknown",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same"
+    },
+    {
+      "id": "sufficient",
+      "label": "机器标记质量足够的原件",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/sufficient",
+      "time": "/at",
+      "mode": "static",
+      "unit": "份",
+      "public": "same"
+    },
+    {
+      "id": "flags",
+      "label": "没给质量结论的原因分布",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/flags",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "shape": "list"
+    },
+    {
+      "id": "cpu_results",
+      "label": "用 CPU 完成识别",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/cpu_results",
+      "time": "/at",
+      "mode": "static",
+      "unit": "次",
+      "public": "same",
+      "note": "不能推断所有 CPU 记录都是显卡忙导致回退。"
+    },
+    {
+      "id": "types",
+      "label": "仍有识别稿的原件类型",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/types",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "shape": "list"
+    },
+    {
+      "id": "recent_records_7",
+      "label": "近 7 天留存完成记录",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/recent_records_7",
+      "time": "/at",
+      "mode": "static",
+      "unit": "次",
+      "public": "same"
+    },
+    {
+      "id": "recent_records_30",
+      "label": "近 30 天留存完成记录",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/recent_records_30",
+      "time": "/at",
+      "mode": "static",
+      "unit": "次",
+      "public": "same"
+    },
+    {
+      "id": "recent",
+      "label": "最近二十份完整识别稿",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/recent",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "shape": "list",
+      "note": "公开只给匿名编号、类型和处理日期。"
+    },
+    {
+      "id": "runtime",
+      "label": "正式运行源码快照",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/runtime",
+      "time": "/at",
+      "mode": "live",
+      "unit": "",
+      "public": "same",
+      "note": "开发工作树的修改不等于正式运行版本更新。"
+    },
+    {
+      "id": "tests",
+      "label": "正式版本既有验收测试",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/tests",
+      "time": "/metrics/acceptance_at",
+      "mode": "static",
+      "unit": "项",
+      "public": "same"
+    },
+    {
+      "id": "skipped",
+      "label": "正式版本验收按条件跳过",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/skipped",
+      "time": "/metrics/acceptance_at",
+      "mode": "static",
+      "unit": "项",
+      "public": "same"
+    },
+    {
+      "id": "quality_cases",
+      "label": "正式版本合成质量案例",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/quality_cases",
+      "time": "/metrics/acceptance_at",
+      "mode": "static",
+      "unit": "个",
+      "public": "same",
+      "records": "/metrics/quality_records",
+      "shape": "list",
+      "note": "合成样例的字错误率只用于该版本验收；不外推私人材料准确率。"
+    },
+    {
+      "id": "quality_passed",
+      "label": "正式版本合成质量案例通过",
+      "source": "ocr.runtime",
+      "pointer": "/metrics/quality_passed",
+      "time": "/metrics/acceptance_at",
+      "mode": "static",
+      "unit": "个",
+      "public": "same"
+    },
+    {
+      "id": "job_states",
+      "label": "全部留存任务状态（含样例）",
+      "source": "ocr.snapshot",
+      "pointer": "/metrics/job_states",
+      "time": "/at",
+      "mode": "static",
+      "unit": "",
+      "public": "same",
+      "note": "好奇：全部任务状态文件，含明确样例与失败；不是不同原件数，也不是产物数。"
+    }
+  ],
+  "artifacts": {
+    "source": "ocr.snapshot",
+    "pointer": "/artifacts"
+  },
+  "size": {
+    "source": "ocr.snapshot",
+    "pointer": "/size"
+  },
+  "links": [
+    {
+      "id": "intro",
+      "label": "项目介绍",
+      "href": "https://github.com/wlyaaaaa/LocalOCR#readme"
+    }
+  ],
+  "skills_href": "/skills/?project=localocr"
+}

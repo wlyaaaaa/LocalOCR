@@ -1,0 +1,208 @@
+{
+  "v": 1,
+  "at": "2026-11-16T03:48:42.985689+00:00",
+  "scope": "现存完成记录；排明确样例；含 AI 批量截图。完整只核对四种文件存在，不代表人工核准或哈希复验。",
+  "metrics": {
+    "source_materials": 6438,
+    "available_materials": 6195,
+    "completed_records": 6814,
+    "available_results": 6544,
+    "processed_pages": 6869,
+    "available_pages": 6250,
+    "latest_completed": "2026-11-14T03:04:46Z",
+    "cpu_results": 478,
+    "recent_7": 96,
+    "recent_records_7": 97,
+    "recent_30": 5557,
+    "recent_records_30": 5850,
+    "escalated": {
+      "total": 2248,
+      "strong": 582,
+      "text": "582 次／共 2,248 次（26%）"
+    },
+    "auto_fast_percent": 74.11,
+    "job_states": {
+      "completed": 6837,
+      "failed": 78,
+      "total": 6915,
+      "text": "completed：6,837 份；failed：78 份"
+    },
+    "low_confidence": 586,
+    "unknown": 450,
+    "sufficient": 5159,
+    "types": [
+      {
+        "label": ".jpg",
+        "count": 1416,
+        "text": ".jpg：1,416 份",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "label": ".pdf",
+        "count": 10,
+        "text": ".pdf：10 份",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "label": ".png",
+        "count": 4727,
+        "text": ".png：4,727 份",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "label": ".webp",
+        "count": 42,
+        "text": ".webp：42 份",
+        "state_text": "四种识别稿仍在"
+      }
+    ],
+    "flags": [
+      {
+        "label": "模型没给置信分",
+        "count": 225,
+        "text": "模型没给置信分：225 份",
+        "state_text": "机器质量标记"
+      },
+      {
+        "label": "没读到字，不能证明无字",
+        "count": 225,
+        "text": "没读到字，不能证明无字：225 份",
+        "state_text": "机器质量标记"
+      },
+      {
+        "label": "显卡不可用，更强一轮没跑起来",
+        "count": 4,
+        "text": "显卡不可用，更强一轮没跑起来：4 份",
+        "state_text": "机器质量标记"
+      }
+    ],
+    "recent": [
+      {
+        "at": "2026-11-13T20:18:12Z",
+        "kind": "png",
+        "text": "识别稿 01 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T20:18:10Z",
+        "kind": "png",
+        "text": "识别稿 02 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T20:18:09Z",
+        "kind": "png",
+        "text": "识别稿 03 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T20:18:07Z",
+        "kind": "png",
+        "text": "识别稿 04 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:14Z",
+        "kind": "png",
+        "text": "识别稿 05 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:13Z",
+        "kind": "png",
+        "text": "识别稿 06 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:10Z",
+        "kind": "png",
+        "text": "识别稿 07 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:08Z",
+        "kind": "png",
+        "text": "识别稿 08 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:06Z",
+        "kind": "png",
+        "text": "识别稿 09 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:04Z",
+        "kind": "png",
+        "text": "识别稿 10 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:03Z",
+        "kind": "png",
+        "text": "识别稿 11 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:48:00Z",
+        "kind": "png",
+        "text": "识别稿 12 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T04:47:58Z",
+        "kind": "png",
+        "text": "识别稿 13 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:53Z",
+        "kind": "png",
+        "text": "识别稿 14 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:50Z",
+        "kind": "png",
+        "text": "识别稿 15 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:48Z",
+        "kind": "png",
+        "text": "识别稿 16 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:46Z",
+        "kind": "png",
+        "text": "识别稿 17 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:44Z",
+        "kind": "png",
+        "text": "识别稿 18 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:42Z",
+        "kind": "png",
+        "text": "识别稿 19 · png",
+        "state_text": "四种识别稿仍在"
+      },
+      {
+        "at": "2026-11-13T02:19:40Z",
+        "kind": "png",
+        "text": "识别稿 20 · png",
+        "state_text": "四种识别稿仍在"
+      }
+    ]
+  },
+  "size": {
+    "docs_chars": 28225,
+    "code_lines": 13382,
+    "at": "2026-11-16T03:48:42.985689+00:00"
+  },
+  "artifacts": []
+}
