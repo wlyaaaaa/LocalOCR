@@ -2,6 +2,7 @@
 import argparse
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -62,14 +63,18 @@ def inventory(data_root, now):
                              state_text="机器质量标记" if key != "types" else "四种识别稿仍在") for label, count in sorted(counts.items())]
     public, named, artifacts, aliases = [], [], [], {}
     for index, row in enumerate(sorted(latest.values(), key=lambda r: datetime.fromisoformat(r["at"].replace("Z", "+00:00")), reverse=True)[:20], 1):
-        job, alias = row["job"], f"ocr.artifact.{index:02d}"
+        job = row["job"]
         kind = Path(job["source_path"]).suffix.lower().lstrip(".")
         public.append(dict(at=row["at"], kind=kind, text=f"识别稿 {index:02d} · {kind}", state_text="四种识别稿仍在"))
         named.append(dict(at=row["at"], text=job["source_path"].replace("\\", "/").rsplit("/", 1)[-1],
             pages=len(job.get("result", {}).get("pages", [])), model=job.get("result", {}).get("model_id"),
             state_text=job.get("result", {}).get("quality", {}).get("status", "未记录状态")))
-        aliases[alias] = dict(path=str(physical_path(job["output_files"]["md"])), format="exists")
-        artifacts.append(dict(at=row["at"], title=named[-1]["text"], kind="ocr", status="completed", public="owner", open=dict(source=alias)))
+        output = physical_path(job["output_files"]["md"]).resolve()
+        directory = output.parent
+        alias = "ocr.results."+hashlib.sha256(directory.as_posix().casefold().encode("utf-8")).hexdigest()[:12]
+        aliases[alias] = dict(path=str(directory), format="exists")
+        artifacts.append(dict(at=row["at"], title=named[-1]["text"], kind="ocr", status="completed", public="owner",
+                              open=dict(source=alias, path=output.relative_to(directory).as_posix())))
     metrics["recent"] = public
     return metrics, dict(metrics=dict(recent_named=named), artifacts=artifacts), aliases
 
