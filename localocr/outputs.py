@@ -11,12 +11,13 @@ from typing import Any
 def atomic_write(path: Path, payload: bytes) -> None:
     """Publish a whole artifact or nothing; a job manifest is the final commit point."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
+    handle = tempfile.NamedTemporaryFile(dir=path.parent, delete=False)
+    temporary = Path(handle.name)
     try:
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)

@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 
+from .outputs import atomic_write
 from .retained_results import read_latest_complete_results
 
 
@@ -30,12 +31,20 @@ def physical_path(value):
     return Path(f"{match[1].upper()}:/{match[2]}" if match else value)
 
 
+def _read_previous(path):
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return previous if isinstance(previous, dict) else None
+
+
 def inventory(data_root, now, cache_path=None):
     if not (data_root / "_server/jobs").is_dir():
         raise FileNotFoundError("retained job directory is unavailable")
     cache_path = cache_path or data_root / "_server/live.inventory-cache.json"
     # Cache statistical metadata only; output-file availability is checked on every scan.
-    cache = json.loads(cache_path.read_text("utf-8")) if cache_path.is_file() else {}
+    cache = _read_previous(cache_path) or {}
     previous = cache.get("jobs", {}) if cache.get("v") == 1 else {}
     current = {}
     def load(path):
@@ -112,10 +121,7 @@ def inventory(data_root, now, cache_path=None):
         artifacts.append(dict(at=row["at"], title=named[-1]["text"], kind="ocr", status="completed", public="owner",
                               open=dict(source=alias, path=output.relative_to(directory).as_posix())))
     metrics["recent"] = public
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
-    temporary.write_text(json.dumps(dict(v=1, jobs=current), ensure_ascii=False), encoding="utf-8")
-    temporary.replace(cache_path)
+    atomic_write(cache_path, json.dumps(dict(v=1, jobs=current), ensure_ascii=False).encode("utf-8"))
     return metrics, dict(metrics=dict(recent_named=named), artifacts=artifacts), aliases
 
 
@@ -145,11 +151,12 @@ print(json.dumps(dict(
 
 def write_stable(path, payload):
     """Unchanged values keep their source time and file bytes, including LF."""
-    previous = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
-    if {k: v for k, v in previous.items() if k != "at"} == {k: v for k, v in payload.items() if k != "at"}:
+    previous = _read_previous(path)
+    if previous is not None and (
+        {k: v for k, v in previous.items() if k != "at"} == {k: v for k, v in payload.items() if k != "at"}
+    ):
         return previous
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2)+"\n", encoding="utf-8", newline="\n")
+    atomic_write(path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     return payload
 
 
@@ -170,7 +177,7 @@ def main():
         text = path.read_text(encoding="utf-8-sig")
         size["docs_chars" if path.suffix.lower() == ".md" else "code_lines"] += sum(not c.isspace() for c in text) if path.suffix.lower() == ".md" else len(text.splitlines())
     scope = "已保存的文字识别结果"
-    old_size = json.loads(args.output.read_text(encoding="utf-8-sig")).get("size", {}) if args.output.is_file() else {}
+    old_size = (_read_previous(args.output) or {}).get("size", {})
     size["at"] = old_size.get("at") if {k: v for k, v in old_size.items() if k != "at"} == size else now.isoformat()
     snapshot = write_stable(args.output, dict(v=1, at=now.isoformat(), scope=scope, metrics=metrics, size=size, artifacts=[]))
     write_stable(args.owner_output, dict(v=1, at=snapshot["at"], scope=scope, **owner))

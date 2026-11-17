@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from localocr.live_snapshot import inventory, write_stable
+from localocr.live_snapshot import inventory, main, write_stable
 
 
 class LiveSnapshotTests(unittest.TestCase):
@@ -75,3 +75,43 @@ class LiveSnapshotTests(unittest.TestCase):
             before = path.stat().st_mtime_ns
             self.assertEqual(write_stable(path, dict(at="later", metrics=metrics))["at"], "first")
             self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_cli_rebuilds_truncated_snapshots_from_retained_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = root / "_server/jobs"
+            jobs.mkdir(parents=True)
+            job = dict(status="completed", source_path="synthetic.png", source_sha256="a", result=dict(pages=[{}]))
+            (jobs / "one.json").write_text(json.dumps(job), encoding="utf-8")
+            paths = {key: root / f"{key}.json"
+                     for key in ("output", "runtime-output", "owner-output", "sources-output")}
+            args = ["live_snapshot", "--data-root", directory]
+            for key, path in paths.items():
+                args.extend([f"--{key}", str(path)])
+                path.write_bytes(b'{"v": ')
+            cache = paths["output"].with_suffix(".inventory-cache.json")
+            runtime = dict(models_bytes=1, model_components=1)
+            with (patch("sys.argv", args), patch("localocr.live_snapshot.subprocess.check_output", return_value=""),
+                  patch("localocr.live_snapshot.runtime_inventory", return_value=runtime)):
+                main()
+                cache.write_bytes(b'{"v": ')
+                main()
+            snapshots = {key: json.loads(path.read_bytes()) for key, path in paths.items()}
+            self.assertEqual(snapshots["output"]["metrics"]["processed_pages"], 1)
+            self.assertEqual(snapshots["output"]["size"]["at"], snapshots["output"]["at"])
+            self.assertIn("one.json", json.loads(cache.read_bytes())["jobs"])
+
+    def test_failed_snapshot_replace_keeps_old_bytes_and_cleans_temporary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            write_stable(path, dict(at="first", metrics={"total": 1}))
+            before = path.read_bytes()
+            payload = dict(at="later", metrics={"total": 2})
+            with patch.object(Path, "replace", autospec=True, side_effect=PermissionError("file in use")) as replace:
+                with self.assertRaisesRegex(PermissionError, "file in use"):
+                    write_stable(path, payload)
+            self.assertEqual(replace.call_args.args[0].parent, path.parent)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(list(path.parent.iterdir()), [path])
+            write_stable(path, payload)
+            self.assertEqual(json.loads(path.read_bytes()), payload)
