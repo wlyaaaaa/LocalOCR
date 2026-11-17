@@ -3,11 +3,41 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from localocr.live_snapshot import inventory, write_stable
 
 
 class LiveSnapshotTests(unittest.TestCase):
+    def test_incremental_jobs_and_live_output_availability(self):
+        now = datetime(2026, 11, 18, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs = root / "_server/jobs"
+            jobs.mkdir(parents=True)
+            files = {kind: str(root / kind) for kind in ("txt", "md", "json", "objective")}
+            for file in files.values(): Path(file).write_text("synthetic")
+            job = dict(status="completed", source_path="synthetic.png", source_sha256="a",
+                updated_at=now.isoformat(), output_files=files, result=dict(pages=[dict(text="not-cached")]))
+            path, cache = jobs / "one.json", root / "cache.json"
+            path.write_text(json.dumps(job))
+            first = inventory(root, now, cache)
+            self.assertNotIn("not-cached", cache.read_text())
+            with patch("localocr.live_snapshot.json.loads", wraps=json.loads) as loads:
+                self.assertEqual(inventory(root, now, cache), first)
+                self.assertEqual(loads.call_count, 1)
+            added = jobs / "two.json"
+            added.write_text(json.dumps(dict(job, source_sha256="b")))
+            self.assertEqual(inventory(root, now, cache)[0]["job_states"]["total"], 2)
+            added.unlink()
+            job["result"]["pages"].append({})
+            path.write_text(json.dumps(job))
+            self.assertEqual(inventory(root, now, cache)[0]["processed_pages"], 2)
+            Path(files["objective"]).unlink()
+            self.assertEqual(inventory(root, now, cache)[0]["available_materials"], 0)
+            path.unlink()
+            self.assertEqual(inventory(root, now, cache)[0]["job_states"]["total"], 0)
+
     def test_latest_complete_flags_overlap_and_stable_time(self):
         now = datetime(2026, 11, 16, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as directory:

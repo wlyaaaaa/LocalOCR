@@ -17,9 +17,30 @@ def physical_path(value):
     return Path(f"{match[1].upper()}:/{match[2]}" if match else value)
 
 
-def inventory(data_root, now):
+def inventory(data_root, now, cache_path=None):
     if not (data_root / "_server/jobs").is_dir():
         raise FileNotFoundError("retained job directory is unavailable")
+    cache_path = cache_path or data_root / "_server/live.inventory-cache.json"
+    # Cache statistical metadata only; output-file availability is checked on every scan.
+    cache = json.loads(cache_path.read_text("utf-8")) if cache_path.is_file() else {}
+    previous = cache.get("jobs", {}) if cache.get("v") == 1 else {}
+    current = {}
+    def load(path):
+        stat = path.stat()
+        signature = [stat.st_mtime_ns, stat.st_size]
+        saved = previous.get(path.name, {})
+        if saved.get("signature") == signature:
+            job = saved["job"]
+        else:
+            job = json.loads(path.read_text(encoding="utf-8-sig"))
+            result = job.get("result", {})
+            job = {key: job[key] for key in ("status", "source_path", "source_sha256", "updated_at", "output_files") if key in job}
+            job["result"] = {key: result[key] for key in ("model_id", "device") if key in result}
+            job["result"]["quality"] = {key: result.get("quality", {})[key] for key in ("status", "flags") if key in result.get("quality", {})}
+            job["result"]["route"] = dict(requested_engine=result.get("route", {}).get("requested_engine"))
+            job["result"]["pages"] = [None] * len(result.get("pages", []))
+        current[path.name] = dict(signature=signature, job=job)
+        return job
     rows, states = [], Counter()
     def normalize(path, job):
         states[job.get("status", "missing")] += 1
@@ -33,7 +54,7 @@ def inventory(data_root, now):
                                 for k in ("txt", "md", "json", "objective")))
         rows.append(row)
         return row
-    latest = read_latest_complete_results((data_root / "_server/jobs").glob("*.json"), normalize)
+    latest = read_latest_complete_results((data_root / "_server/jobs").glob("*.json"), normalize, load=load)
     available = [r for r in rows if r["complete"]]
     auto = [r for r in rows if r["job"].get("result", {}).get("route", {}).get("requested_engine") == "auto"]
     fast = sum(r["job"].get("result", {}).get("model_id") == "ppocrv6-medium" for r in auto)
@@ -76,6 +97,10 @@ def inventory(data_root, now):
         artifacts.append(dict(at=row["at"], title=named[-1]["text"], kind="ocr", status="completed", public="owner",
                               open=dict(source=alias, path=output.relative_to(directory).as_posix())))
     metrics["recent"] = public
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    temporary.write_text(json.dumps(dict(v=1, jobs=current), ensure_ascii=False), encoding="utf-8")
+    temporary.replace(cache_path)
     return metrics, dict(metrics=dict(recent_named=named), artifacts=artifacts), aliases
 
 
@@ -120,7 +145,7 @@ def main():
         parser.add_argument("--"+name, type=Path, required=True)
     args = parser.parse_args()
     now = datetime.now(timezone.utc)
-    metrics, owner, aliases = inventory(args.data_root, now)
+    metrics, owner, aliases = inventory(args.data_root, now, args.output.with_suffix(".inventory-cache.json"))
     root = Path(__file__).resolve().parents[1]
     size = dict(docs_chars=0, code_lines=0)
     for name in subprocess.check_output(["git", "-C", str(root), "ls-files", "-z"], encoding="utf-8").split("\0"):

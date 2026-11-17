@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-def read_latest_complete_results(paths, normalize, *, source_ids=None):
+def read_latest_complete_results(paths, normalize, *, source_ids=None, load=None):
     """Read each JSON once; normalize(path, payload) supplies source_id/at/complete.
 
     Return {source_id: latest complete row}; an incomplete newer attempt cannot
@@ -15,7 +15,7 @@ def read_latest_complete_results(paths, normalize, *, source_ids=None):
     wanted = None if source_ids is None else set(source_ids)
     latest, order = {}, {}
     for path in sorted(set(map(Path, paths))):
-        row = normalize(path, json.loads(path.read_text(encoding="utf-8-sig")))
+        row = normalize(path, load(path) if load else json.loads(path.read_text(encoding="utf-8-sig")))
         if not row or not row.get("complete") or not row.get("source_id") or not row.get("at"):
             continue
         identity = row["source_id"]
