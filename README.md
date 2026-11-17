@@ -19,4 +19,4 @@ VL 的 GPU 推理使用 CUDA 延迟加载与数学注意力后端，减少工作
 
 本仓无独占计划任务；现有 PCConfig 共用夜检只跑测试，尚未调用这份按需输出。每晚采样和模型变动触发须由共享接线方接上，手工运行不算已自动刷新。没有自动触发前，按需静态数不设陈旧阈值；接上每晚采样后可配置两天阈值。模型实测七天标旧。
 
-模型无关验证：`python -B -m unittest discover -s tests -v`。Windows wrapper 行为用本机 Windows 或 WSL 的 Windows 互操作；不运行 GPU 验收或私人样例。
+模型无关验证见[测试说明](docs/QUICKSTART_FOR_AI.md#测试)。全套用 Ubuntu WSL 的独立 Python 测试环境执行，Windows HTTP 包装器在 Windows 补测。

@@ -433,6 +433,7 @@ class RuntimeLifecycleTest(unittest.TestCase):
             recovered = self._predict(runtime, self._payload(root, profile_id="profile-lease"))
             self.assertTrue(_pid_alive(recovered["worker_pid"]))
 
+    @unittest.skipUnless(os.name == "posix", "crashed-worker process-group cleanup is verified in WSL/Linux")
     def test_worker_crash_reaps_descendant_and_next_request_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

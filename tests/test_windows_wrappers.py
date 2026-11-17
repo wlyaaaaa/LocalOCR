@@ -441,48 +441,69 @@ Set-Location -LiteralPath '{working_dir}'
     @unittest.skipUnless(WINDOWS_AVAILABLE, "Requires Windows or WSL Windows interop")
     def test_process_deadline_includes_inherited_output_pipes(self) -> None:
         executable = "pwsh" if os.name == "nt" else "pwsh.exe"
+        fixture_dir = tempfile.TemporaryDirectory(dir=self._windows_temp_dir())
+        self.addCleanup(fixture_dir.cleanup)
+        folder = Path(fixture_dir.name)
+        fixture = folder / "PipeHolder.exe"
+        source = fixture.with_suffix(".cs")
+        # Compile once outside the deadline so it exercises inherited handles without timing PowerShell startup.
+        source.write_text(r"""
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
+
+class PipeHolder {
+    static void Main(string[] args) {
+        string state = args[0];
+        if (args[1] == "child") {
+            Thread.Sleep(4000);
+            File.WriteAllText(state + ".done", "natural exit");
+            return;
+        }
+        using (var parent = Process.GetCurrentProcess()) {
+            var start = new ProcessStartInfo(parent.MainModule.FileName, "\"" + state + "\" child");
+            start.UseShellExecute = false;
+            start.CreateNoWindow = true;
+            using (var child = Process.Start(start)) {
+                File.WriteAllText(state, "{\"parent\":" + parent.Id + ",\"child\":" + child.Id + "}");
+            }
+        }
+        Console.Out.WriteLine("parent-out");
+        Console.Error.WriteLine("parent-err");
+        if (args[1] == "wait") Thread.Sleep(20000);
+    }
+}
+""", encoding="utf-8")
+        csc = r"Microsoft.NET\Framework\v4.0.30319\csc.exe"
+        source_path = self._windows_script_path(source).replace("'", "''")
+        fixture_path = self._windows_script_path(fixture).replace("'", "''")
+        compiled = subprocess.run(
+            [executable, "-NoProfile", "-Command",
+             f"& (Join-Path $env:WINDIR '{csc}') /nologo '/out:{fixture_path}' '{source_path}'"],
+            capture_output=True, timeout=15,
+        )
+        self.assertEqual(compiled.returncode, 0, _decode_process_output(compiled.stdout + compiled.stderr))
         for filename, function, wait_parent in (("ocr_smart.ps1", "Invoke-BoundedProcess", False),
                 ("stop_server.ps1", "Invoke-WslCommand", False),
                 ("scripts/windows_paths.ps1", "Invoke-LocalOcrWslPathCommand", False),
                 ("scripts/windows_paths.ps1", "Invoke-LocalOcrWslPathCommand", True)):
-            # Windows children need drive-local fixtures rather than WSL /tmp UNC paths.
-            with self.subTest(function=function, wait_parent=wait_parent), tempfile.TemporaryDirectory(dir=self._windows_temp_dir()) as temp_dir:
-                folder = Path(temp_dir)
-                child = folder / "child.ps1"
-                parent = folder / "parent.ps1"
-                state = folder / "state.json"
-                child.write_text(
-                    "param([string]$StatePath)\nStart-Sleep -Seconds 4\n"
-                    "[IO.File]::WriteAllText($StatePath + '.done', 'natural exit')\n",
-                    encoding="utf-8-sig",
-                )
-                parent.write_text("""
-param([string]$ChildPath, [string]$StatePath, [switch]$Wait)
-$psi = [Diagnostics.ProcessStartInfo]::new()
-$psi.FileName = (Get-Process -Id $PID).Path
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-foreach ($a in @('-NoProfile', '-File', $ChildPath, $StatePath)) { [void]$psi.ArgumentList.Add($a) }
-$child = [Diagnostics.Process]::Start($psi)
-[IO.File]::WriteAllText($StatePath, (@{parent=$PID; child=$child.Id} | ConvertTo-Json -Compress))
-[Console]::Out.WriteLine('parent-out')
-[Console]::Error.WriteLine('parent-err')
-if ($Wait) { Start-Sleep -Seconds 20 }
-exit 0
-""", encoding="utf-8-sig")
-                paths = [ROOT / filename, parent, child, state]
+            with self.subTest(function=function, wait_parent=wait_parent):
+                state = folder / f"{function}-{wait_parent}.json"
+                paths = [ROOT / filename, fixture, state]
                 quoted = ["'" + self._windows_script_path(p).replace("'", "''") + "'" for p in paths]
                 command = f"""
 $ErrorActionPreference = 'Stop'
-$sourcePath, $parentPath, $childPath, $statePath = {', '.join(quoted)}
+$sourcePath, $fixturePath, $statePath = {', '.join(quoted)}
+$fixtureExe = (Get-Process -Id $PID).Path
 $functionName = '{function}'
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
 $definition = $ast.Find({{param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
 }}, $true).Extent.Text
 # Only substitute the executable; never execute the wrapper's top-level code or WSL.
-$definition = $definition.Replace('$psi.FileName = "wsl.exe"', '$psi.FileName = (Get-Process -Id $PID).Path')
-$definition = $definition.Replace("::new('wsl.exe')", '::new((Get-Process -Id $PID).Path)')
+$definition = $definition.Replace('$psi.FileName = "wsl.exe"', '$psi.FileName = $fixtureExe')
+$definition = $definition.Replace("::new('wsl.exe')", '::new($fixtureExe)')
 Invoke-Expression $definition
 $utf8 = $null
 if ($functionName -eq 'Invoke-LocalOcrWslPathCommand') {{
@@ -505,13 +526,14 @@ $ordinary = foreach ($exitCode in @(0, 7)) {{
         catch {{ @{{error=$_.Exception.Message}} }}
     }}
 }}
-$arguments = @('-NoProfile', '-File', $parentPath, $childPath, $statePath{", '-Wait'" if wait_parent else ""})
+$fixtureExe = $fixturePath
+$arguments = @($statePath, '{"wait" if wait_parent else "parent"}')
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $timedOut = $false
 $result = $null
 try {{
     if ($functionName -eq 'Invoke-BoundedProcess') {{
-        $result = Invoke-BoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments -TimeoutSec 1
+        $result = Invoke-BoundedProcess -FilePath $fixtureExe -ArgumentList $arguments -TimeoutSec 1
         $timedOut = $result.timed_out
     }} elseif ($functionName -eq 'Invoke-LocalOcrWslPathCommand') {{
         $result = Invoke-LocalOcrWslPathCommand -Arguments $arguments -TimeoutSec {2 if wait_parent else 1}

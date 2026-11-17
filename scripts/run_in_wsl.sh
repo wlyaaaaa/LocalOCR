@@ -6,9 +6,15 @@ export PADDLE_PDX_DISABLE_DEV_MODEL_WL=true
 export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=true
 export PADDLE_PDX_MODEL_SOURCE=modelscope
 PROJECT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+export LOCALOCR_PROJECT_ROOT="$PROJECT"
+if [[ ${1:-} == -m && ${2:-} == unittest || ${1:-} == -B && ${2:-} == -m && ${3:-} == unittest ]]; then
+    TEST_RUNTIME=${LOCALOCR_RUNTIME:-$HOME/localocr-test-venv}
+    [[ -x "$TEST_RUNTIME/bin/python" ]] || { echo "LocalOCR test environment missing: $TEST_RUNTIME (see docs/QUICKSTART_FOR_AI.md)" >&2; exit 2; }
+    cd "$PROJECT"
+    exec env -u PYTHONPATH -u PYTHONSAFEPATH "$TEST_RUNTIME/bin/python" "$@"
+fi
 RUNTIME=${LOCALOCR_RUNTIME:-/root/localocr-runtimes/current}
 [[ -x "$RUNTIME/bin/python" ]] || { echo "LocalOCR runtime is missing or broken: $RUNTIME" >&2; exit 2; }
-export LOCALOCR_PROJECT_ROOT="$PROJECT"
 if [[ -d "$RUNTIME/app/localocr" ]]; then
     APP=$(cd "$RUNTIME/app" && pwd)
     export PYTHONPATH="$APP${PYTHONPATH:+:$PYTHONPATH}"

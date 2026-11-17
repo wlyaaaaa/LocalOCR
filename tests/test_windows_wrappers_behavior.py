@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import psutil
+import re
+import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -132,6 +135,31 @@ class FakeLocalOcr:
 
 @unittest.skipUnless(os.name == "nt", "Run Windows HTTP wrapper tests natively so client and test server share loopback")
 class WindowsWrapperBehaviorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        wrapper_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(wrapper_dir.cleanup)
+        self.wrapper_root = Path(wrapper_dir.name)
+        for name in ("ocr_once.ps1", "ocr_smart.ps1", "start_server.ps1", "release_resources.ps1"):
+            shutil.copyfile(ROOT / name, self.wrapper_root / name)
+        # The HTTP and stop-policy tests use a synthetic Linux process snapshot.
+        # The WSL process runner itself is exercised in test_windows_wrappers.
+        helper = self.wrapper_root / "scripts/windows_paths.ps1"
+        helper.parent.mkdir()
+        shutil.copyfile(ROOT / "scripts/wrapper_summary.ps1", helper.with_name("wrapper_summary.ps1"))
+        helper.write_text("function ConvertTo-LocalOcrWslPath { '/synthetic/localocr' }\n", encoding="utf-8-sig")
+        stop_source = (ROOT / "stop_server.ps1").read_text(encoding="utf-8-sig")
+        stop_source, replacements = re.subn(r"(?ms)^function Invoke-WslCommand \{.*?^\}", """
+function Invoke-WslCommand {
+    param([string[]]$Arguments, [int]$TimeoutSec)
+    if ($Arguments[3] -ne 'bash' -or $Arguments[5] -ne '-c') {
+        throw 'Synthetic snapshot cannot execute non-query WSL commands'
+    }
+    '{"servers":[],"listeners":[],"identity_matches":[]}'
+}
+""".strip(), stop_source)
+        self.assertEqual(replacements, 1)
+        (self.wrapper_root / "stop_server.ps1").write_text(stop_source, encoding="utf-8-sig")
+
     def test_wrappers_pass_requested_device(self):
         for script in ("ocr_once.ps1", "ocr_smart.ps1"):
             for device in (None, "gpu", "cpu"):
@@ -172,7 +200,7 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                self._windows_script_path(ROOT / script),
+                self._windows_script_path(self.wrapper_root / script),
                 *arguments,
             ],
             check=False,
@@ -200,46 +228,6 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
                 except json.JSONDecodeError:
                     pass
             self.fail(f"wrapper did not return JSON: {exc}; stdout={completed.stdout!r}; stderr={completed.stderr!r}")
-
-    def _unused_windows_port(self) -> int:
-        executable = "pwsh" if os.name == "nt" else "pwsh.exe"
-        port_command = "$listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Any,0);$listener.Start();try{$listener.LocalEndpoint.Port}finally{$listener.Stop()}"
-        wsl_probe = (
-            "import json,psutil,sys;"
-            "port=int(sys.argv[1]);"
-            "print(json.dumps(any(c.status==psutil.CONN_LISTEN and c.laddr and c.laddr.port==port "
-            "for c in psutil.net_connections(kind='tcp'))))"
-        )
-        for _ in range(8):
-            selected = subprocess.run(
-                [executable, "-NoProfile", "-Command", port_command],
-                check=False,
-                capture_output=True,
-                text=False,
-                timeout=10,
-            )
-            self.assertEqual(selected.returncode, 0, _decode_process_output(selected.stderr))
-            port = int(_decode_process_output(selected.stdout).strip())
-            probe = subprocess.run(
-                [
-                    "wsl.exe",
-                    "-d",
-                    "Ubuntu",
-                    "-e",
-                    "/root/localocr-runtimes/current/bin/python",
-                    "-c",
-                    wsl_probe,
-                    str(port),
-                ],
-                check=False,
-                capture_output=True,
-                text=False,
-                timeout=10,
-            )
-            self.assertEqual(probe.returncode, 0, _decode_process_output(probe.stderr))
-            self.assertEqual(_decode_process_output(probe.stdout).strip().splitlines()[-1], "false")
-            return port
-        self.fail("could not select a port free in both Windows and WSL")
 
     def test_windows_codepage_stderr_is_decoded_without_loss(self) -> None:
         self.assertEqual(_decode_process_output("失败".encode("gb18030")), "失败")
@@ -377,6 +365,7 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         self.assertEqual(payload["status"], "cleanup_failed")
         self.assertEqual(payload["error_code"], "resource_release_failed")
         self.assertTrue(payload["ocr_result"]["ok"])
+        self.assertIn("does not match the process on port", payload["detail"])
         self.assertNotIn("resources released", completed.stdout.lower())
 
     def test_smart_relays_busy_job_and_does_not_collapse_http_json(self) -> None:
@@ -624,6 +613,7 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
 
         self.assertNotEqual(completed.returncode, 0)
         output = f"{completed.stdout}\n{completed.stderr}"
+        self.assertIn("does not match the process on port", output)
         self.assertNotIn("API stopped", output)
         self.assertNotIn("Stop command sent", output)
 
@@ -649,10 +639,13 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         self.assertNotIn("resources released", output.lower())
 
     def test_stop_server_reports_unused_port_without_touching_pid_file(self) -> None:
-        port = self._unused_windows_port()
-
-        pid_path = ROOT / "_server" / "wsl-server.pid"
-        before = pid_path.read_bytes() if pid_path.is_file() else None
+        with socket.socket() as reservation:
+            reservation.bind(("0.0.0.0", 0))
+            port = reservation.getsockname()[1]
+        pid_path = self.wrapper_root / "_server" / "wsl-server.pid"
+        pid_path.parent.mkdir()
+        before = b"42424242\n"
+        pid_path.write_bytes(before)
         completed = self._run_wrapper(
             "stop_server.ps1",
             "-Port",
@@ -665,8 +658,7 @@ class WindowsWrapperBehaviorTest(unittest.TestCase):
         output = f"{completed.stdout}\n{completed.stderr}"
         self.assertIn("already stopped", output)
         self.assertNotIn("Stop failed", output)
-        after = pid_path.read_bytes() if pid_path.is_file() else None
-        self.assertEqual(after, before)
+        self.assertEqual(pid_path.read_bytes(), before)
 
     def test_start_server_detached_launcher_closes_parent_pipe_and_keeps_child_output(self) -> None:
         if os.name != "nt":

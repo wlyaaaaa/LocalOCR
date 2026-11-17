@@ -213,13 +213,19 @@ wsl.exe -d Ubuntu -e bash "$projectWsl/scripts/install_wsl.sh"
 
 ## 测试
 
+在 Ubuntu WSL 的项目检出目录执行模型无关套件。使用 Python 3.12 建独立测试环境，避免默认生产快照抢先被导入：
+
 ```bash
-scripts/run_in_wsl.sh -m unittest discover -s tests -q
-# 明确需要跨模型实机验收时才运行：
-scripts/run_in_wsl.sh tests/run_tests.py --allow-heavy
+python3.12 -m venv "$HOME/localocr-test-venv"
+"$HOME/localocr-test-venv/bin/python" -m pip install -r requirements/test.txt
+bash scripts/run_in_wsl.sh -B -m unittest discover -s tests -v
 ```
 
-`tests/run_tests.py` 是会依次加载 OCR、VL、Structure 模型并写入测试输出与
+夜检也使用这条命令。测试默认用上述虚拟环境和当前检出的源码，可以用 `LOCALOCR_RUNTIME` 指定另一个独立测试环境。
+
+Windows HTTP 包装器用例需要同一个 Windows 回环地址。在 Windows 的项目检出目录用含 `psutil` 的独立 Python 环境运行 `python -B -m unittest discover -s tests -p test_windows_wrappers_behavior.py -v`，补齐 WSL 全套中标记为 Windows 专用的用例。其他 Windows 包装器用例可从启用了 Windows 互操作的 WSL 执行。
+
+`bash scripts/run_in_wsl.sh tests/run_tests.py --allow-heavy` 会依次加载 OCR、VL、Structure 模型并写入测试输出与
 `quality.json` 的重型 GPU 集成测试。它不是普通健康检查，只有用户明确授权本地
 重型集成测试时才可添加 `--allow-heavy`；默认稳定性检查使用 `/health`、单元测试和
 单样例 smoke。运行时通过 LocalGpuBroker 与 Ollama 排他；文字识别可与 ChineseASR 转写并行。

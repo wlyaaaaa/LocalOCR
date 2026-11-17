@@ -108,6 +108,7 @@ class ReleaseContractTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, 'An unfinished LocalOCR job remains'):
                             manager.ensure_retirement_idle(root / 'retired')
 
+    @unittest.skipUnless(os.name == 'posix', 'Runtime activation requires POSIX directory symlink replacement')
     def test_successful_switch_survives_cleanup_failure_and_rollback_target_is_protected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -171,6 +172,7 @@ class ReleaseContractTests(unittest.TestCase):
                 stopped.assert_not_called()
             self.assertFalse((root / 'current').exists())
 
+    @unittest.skipUnless(os.name == 'posix', 'Runtime activation requires POSIX directory symlink replacement')
     def test_atomic_activation_preserves_previous_and_switches_current(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); old = root / 'old'; new = root / 'new'; old.mkdir(); new.mkdir()

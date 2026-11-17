@@ -1,0 +1,10 @@
+# Model-free suite, using Python 3.12 as in the WSL runtime.
+fastapi==0.139.0
+httpx==0.28.1
+numpy==2.3.5
+opencv-contrib-python==4.10.0.84
+pillow==13.0.0
+psutil==7.2.2
+pypdfium2==5.11.0
+python-multipart==0.0.32
+uvicorn==0.50.0
