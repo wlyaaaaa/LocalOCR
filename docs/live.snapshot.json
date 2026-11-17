@@ -25,7 +25,7 @@
       "completed": 6837,
       "failed": 78,
       "total": 6915,
-      "text": "completed：6,837 份；failed：78 份"
+      "text": "完成：6,837 份；失败：78 份"
     },
     "low_confidence": 586,
     "unknown": 450,

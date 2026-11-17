@@ -12,6 +12,19 @@ import subprocess
 from .retained_results import read_latest_complete_results
 
 
+JOB_STATE_LABELS = {
+    "completed": "完成",
+    "failed": "失败",
+    "running": "运行中",
+    "missing": "未记录状态",
+}
+QUALITY_STATE_LABELS = {
+    "sufficient": "质量足够",
+    "low_confidence": "置信度较低",
+    "unknown": "未给质量结论",
+}
+
+
 def physical_path(value):
     match = re.match(r"/mnt/([a-z])/(.*)", value) if os.name == "nt" else None
     return Path(f"{match[1].upper()}:/{match[2]}" if match else value)
@@ -71,7 +84,8 @@ def inventory(data_root, now, cache_path=None):
     metrics["escalated"] = dict(total=len(auto), strong=len(auto)-fast,
         text=f"{len(auto)-fast:,} 次／共 {len(auto):,} 次" + (f"（{(len(auto)-fast)/len(auto):.0%}）" if auto else ""))
     metrics["auto_fast_percent"] = round(fast/len(auto)*100, 2) if auto else None
-    metrics["job_states"] = dict(states, total=sum(states.values()), text="；".join(f"{k}：{v:,} 份" for k, v in sorted(states.items())))
+    metrics["job_states"] = dict(states, total=sum(states.values()), text="；".join(
+        f"{JOB_STATE_LABELS.get(state, '未知状态')}：{count:,} 份" for state, count in sorted(states.items())))
     quality = Counter(r["job"].get("result", {}).get("quality", {}).get("status", "missing") for r in latest.values())
     metrics.update(low_confidence=quality["low_confidence"], unknown=quality["unknown"], sufficient=quality["sufficient"])
     groups = dict(types=Counter(Path(r["job"]["source_path"]).suffix.lower() for r in latest.values()),
@@ -87,9 +101,10 @@ def inventory(data_root, now, cache_path=None):
         job = row["job"]
         kind = Path(job["source_path"]).suffix.lower().lstrip(".")
         public.append(dict(at=row["at"], kind=kind, text=f"识别稿 {index:02d} · {kind}", state_text="四种识别稿仍在"))
+        quality_state = job.get("result", {}).get("quality", {}).get("status")
         named.append(dict(at=row["at"], text=job["source_path"].replace("\\", "/").rsplit("/", 1)[-1],
             pages=len(job.get("result", {}).get("pages", [])), model=job.get("result", {}).get("model_id"),
-            state_text=job.get("result", {}).get("quality", {}).get("status", "未记录状态")))
+            state_text=QUALITY_STATE_LABELS.get(quality_state, "未记录状态")))
         output = physical_path(job["output_files"]["md"]).resolve()
         directory = output.parent
         alias = "ocr.results."+hashlib.sha256(directory.as_posix().casefold().encode("utf-8")).hexdigest()[:12]

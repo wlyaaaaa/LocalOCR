@@ -54,11 +54,19 @@ class LiveSnapshotTests(unittest.TestCase):
                 job = dict(status="completed", source_path="synthetic.png", source_sha256=source,
                     updated_at=(now-timedelta(hours=3-index)).isoformat(), output_files=files, result=result)
                 (root / f"_server/jobs/{index}.json").write_text(json.dumps(job))
+            for index, job in enumerate((dict(status="failed"), dict(status="running"), {}, dict(status="other")), 3):
+                (root / f"_server/jobs/{index}.json").write_text(json.dumps(job))
             metrics, owner, aliases = inventory(root, now)
+            self.assertEqual(metrics["job_states"], dict(
+                completed=3, failed=1, running=1, missing=1, other=1, total=7,
+                text="完成：3 份；失败：1 份；未记录状态：1 份；未知状态：1 份；运行中：1 份"))
+            self.assertEqual(metrics["latest_completed"], (now-timedelta(hours=1)).isoformat())
             self.assertEqual((metrics["completed_records"], metrics["available_materials"], metrics["available_pages"]), (3, 2, 4))
             self.assertEqual([r["count"] for r in metrics["flags"]], [1, 2])
             self.assertEqual(metrics["recent_7"], 2)
             self.assertEqual((len(owner["artifacts"]), len(aliases)), (2, 1))
+            self.assertEqual({r["state_text"] for r in owner["metrics"]["recent_named"]}, {"未给质量结论"})
+            self.assertEqual({r["status"] for r in owner["artifacts"]}, {"completed"})
             self.assertEqual({a["path"] for a in aliases.values()}, {str(root.resolve())})
             self.assertEqual({r["open"]["source"] for r in owner["artifacts"]}, set(aliases))
             self.assertEqual({r["open"]["path"] for r in owner["artifacts"]}, {"0.md", "2.md"})
