@@ -129,7 +129,7 @@ def main():
             continue
         text = path.read_text(encoding="utf-8-sig")
         size["docs_chars" if path.suffix.lower() == ".md" else "code_lines"] += sum(not c.isspace() for c in text) if path.suffix.lower() == ".md" else len(text.splitlines())
-    scope = "现存完成记录；排明确样例；含 AI 批量截图。完整只核对四种文件存在，不代表人工核准或哈希复验。"
+    scope = "已保存的文字识别结果"
     old_size = json.loads(args.output.read_text(encoding="utf-8-sig")).get("size", {}) if args.output.is_file() else {}
     size["at"] = old_size.get("at") if {k: v for k, v in old_size.items() if k != "at"} == size else now.isoformat()
     snapshot = write_stable(args.output, dict(v=1, at=now.isoformat(), scope=scope, metrics=metrics, size=size, artifacts=[]))
