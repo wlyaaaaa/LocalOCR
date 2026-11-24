@@ -149,6 +149,11 @@ print(json.dumps(dict(
         text=True, encoding="utf-8", capture_output=True, check=True, timeout=60).stdout)
 
 
+def write_snapshot(path, payload):
+    atomic_write(path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    return payload
+
+
 def write_stable(path, payload):
     """Unchanged values keep their source time and file bytes, including LF."""
     previous = _read_previous(path)
@@ -156,8 +161,7 @@ def write_stable(path, payload):
         {k: v for k, v in previous.items() if k != "at"} == {k: v for k, v in payload.items() if k != "at"}
     ):
         return previous
-    atomic_write(path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-    return payload
+    return write_snapshot(path, payload)
 
 
 def main():
@@ -184,7 +188,8 @@ def main():
     runtime = runtime_inventory()
     runtime["models"] = dict(bytes=runtime["models_bytes"], components=runtime["model_components"],
         text=f"{runtime['models_bytes']/2**30:.2f} GB，{runtime['model_components']} 个组件")
-    write_stable(args.runtime_output, dict(v=1, at=now.isoformat(), scope="已安装模型逻辑大小；已激活版本的既有验收，不运行识别", metrics=runtime))
+    write_snapshot(args.runtime_output, dict(v=1, at=datetime.now(timezone.utc).isoformat(),
+        scope="本轮核对已安装模型逻辑大小和正式运行版本；验收时间沿用该版本的既有记录，不运行识别", metrics=runtime))
     write_stable(args.sources_output, dict(sources=aliases))
 
 
