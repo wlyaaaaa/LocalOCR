@@ -75,7 +75,7 @@
         "quality_passed",
         "job_states"
       ],
-      "note": "页次含重复识别；按原件只取最新且四种产物完整的结果。未给质量结论的原因旗标可交叠，不相加当原件总数，不换算准确率。合成样例通过数只说明版本验收。"
+      "note": "页次含重复识别；按原件只取最新且四种产物完整的结果。未给质量结论的原因旗标可交叠，不相加当原件总数，不换算准确率。测试样例通过数只说明版本验收。"
     }
   ],
   "metrics": [
@@ -338,7 +338,7 @@
     },
     {
       "id": "quality_cases",
-      "label": "正式版本合成质量案例",
+      "label": "正式版本质量案例",
       "source": "ocr.runtime",
       "pointer": "/metrics/quality_cases",
       "time": "/metrics/acceptance_at",
@@ -347,11 +347,11 @@
       "public": "same",
       "records": "/metrics/quality_records",
       "shape": "list",
-      "note": "合成样例的字错误率只用于该版本验收；不外推私人材料准确率。"
+      "note": "测试样例的字错误率只用于该版本验收；不外推私人材料准确率。"
     },
     {
       "id": "quality_passed",
-      "label": "正式版本合成质量案例通过",
+      "label": "正式版本质量案例通过",
       "source": "ocr.runtime",
       "pointer": "/metrics/quality_passed",
       "time": "/metrics/acceptance_at",
